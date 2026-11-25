@@ -1,4 +1,3 @@
-
 package com.wad.chessoverlay
 
 import android.app.Notification
@@ -38,7 +37,7 @@ class ScreenCaptureService : Service() {
     
     private var frameCount = 0
     private var lastFpsTime = 0L
-    private var lastProcessTime = 0L // Buat throttle pembacaan papan
+    private var lastProcessTime = 0L
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -103,11 +102,12 @@ class ScreenCaptureService : Service() {
                     Handler(mainLooper).post {
                         val isReady = boardReader.isBoardReady()
                         val statusText = if (isReady) "Kalibrasi OK" else "Kalibrasi Belum Ada!"
-                        overlayView?.text = "Capture: $fps FPS | $statusText"
+                        // Update kecil aja di judul atas
+                        overlayView?.text = "FPS: $fps | $statusText\nMemindai papan..."
                     }
                 }
 
-                // Proses baca papan tiap 500ms aja biar engga berat
+                // Proses baca papan tiap 500ms
                 if (currentTime - lastProcessTime >= 500) {
                     lastProcessTime = currentTime
                     processBoardImage(image, width, height)
@@ -129,26 +129,24 @@ class ScreenCaptureService : Service() {
         if (!boardReader.isBoardReady()) return
         
         try {
-            // Konversi Image ke Bitmap
             val planes = image.planes
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * width
             
-            // Bitmap harus dibikin sesuai alignment padding
             val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
             bitmap.copyPixelsFromBuffer(buffer)
 
-            // Panggil BoardReader buat ngecek warna kotak
-            val colorResult = boardReader.sampleBoardColors(bitmap)
+            val boardString = boardReader.scanFullBoard(bitmap)
             
             Handler(mainLooper).post {
-                overlayView?.text = "Pixel Test:\n$colorResult"
-                overlayView?.setTextColor(0xFF00FF00.toInt()) // Hijau
+                overlayView?.textSize = 12f 
+                overlayView?.text = "Papan:\n$boardString"
+                overlayView?.setTextColor(0xFF00FF00.toInt())
             }
             
-            bitmap.recycle() // Wajib dibuang biar RAM engga penuh
+            bitmap.recycle()
         } catch (e: Exception) {
             Handler(mainLooper).post {
                 overlayView?.text = "Error: ${e.message}"
@@ -170,7 +168,7 @@ class ScreenCaptureService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 100
+            x = 50
             y = 100
         }
 
@@ -179,7 +177,7 @@ class ScreenCaptureService : Service() {
             setBackgroundColor(0xAA000000.toInt())
             setTextColor(0xFFFFFFFF.toInt())
             setPadding(30, 30, 30, 30)
-            textSize = 14f
+            textSize = 12f
         }
 
         windowManager.addView(overlayView, params)
@@ -197,7 +195,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Menganalisis papan catur...")
+            .setContentText("Memindai papan catur...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
