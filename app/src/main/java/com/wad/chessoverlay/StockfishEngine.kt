@@ -80,28 +80,27 @@ class StockfishEngine(private val context: Context) {
     }
 
     fun getBestMove(fen: String): String {
-        if (!isReady) return ""
+        if (!isReady) return "Engine Mati"
         
         sendCommand("position fen $fen")
-        sendCommand("go depth 10")
+        sendCommand("go movetime 1000") // Paksa mikir 1 detik, langsung jawab
         
         var bestMove = ""
         try {
             var line: String?
-            // Baca terus sampai dapet bestmove
             while (reader?.readLine().also { line = it } != null) {
+                // Kita biarin dia baca info depth dulu, baru ambil bestmove
                 if (line!!.startsWith("bestmove")) {
                     bestMove = line!!.split(" ")[1]
                     break
                 }
             }
         } catch (e: Exception) {
-            return ""
+            return "Error Baca"
         }
         
-        // Kalau kosong, kita kasih default biar panahnya tetep muncul buat testing
         if (bestMove.isEmpty() || bestMove == "(none)") {
-            return "e2e4" // Langkah default buat ngetes panah
+            return "FEN Ilegal" // Biar kita tau kalau Stockfish nolak posisinya
         }
         return bestMove
     }
