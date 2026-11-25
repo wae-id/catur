@@ -23,16 +23,17 @@ class CalibrationActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         val layout = FrameLayout(this)
-        touchView = CalibrationView(this) { count ->
-            if (count < 4) {
-                statusText.text = "Tap 4 pojok LUAR papan ($count/4)"
-            } else {
-                statusText.text = "Cek titik merah. Jika pas, klik Simpan. Jika meleset, tap lagi untuk ulang."
-            }
+        
+        // Load titik sebelumnya kalau ada, kalau engga bikin kotak default di tengah
+        val prefs = getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
+        val savedJson = prefs.getString("calibration_points", null)
+        
+        touchView = CalibrationView(this, savedJson) {
+            statusText.text = "Geser 4 titik biru ke pojok LUAR papan."
         }
         
         statusText = TextView(this).apply {
-            text = "Tap pojok luar (a8, h8, h1, a1)"
+            text = "Geser 4 titik biru ke pojok LUAR papan."
             setBackgroundColor(Color.parseColor("#CC000000"))
             setTextColor(Color.WHITE)
             setPadding(30, 30, 30, 30)
@@ -41,11 +42,7 @@ class CalibrationActivity : AppCompatActivity() {
         val btnSave = Button(this).apply {
             text = "Simpan Kalibrasi"
             setOnClickListener {
-                if (touchView.getPoints().size == 4) {
-                    savePoints(touchView.getPoints())
-                } else {
-                    statusText.text = "Tap 4 titik dulu wad!"
-                }
+                savePoints(touchView.getPoints())
             }
         }
 
@@ -74,43 +71,91 @@ class CalibrationActivity : AppCompatActivity() {
     }
 }
 
-class CalibrationView(context: Context, private val onPointsChanged: (Int) -> Unit) : View(context) {
+class CalibrationView(context: Context, savedJson: String?, private val onMoved: () -> Unit) : View(context) {
     private val points = mutableListOf<PointF>()
-    private val paint = Paint().apply { color = Color.RED; isAntiAlias = true; style = Paint.Style.FILL }
-    private val strokePaint = Paint().apply { color = Color.GREEN; isAntiAlias = true; style = Paint.Style.STROKE; strokeWidth = 5f }
-    private val textPaint = Paint().apply { color = Color.WHITE; textSize = 50f; textAlign = Paint.Align.CENTER }
+    private var activePointIndex = -1
     
-    // Paint buat preview titik merah
-    private val dotPaint = Paint().apply { color = Color.RED; isAntiAlias = true; style = Paint.Style.FILL }
+    private val bluePaint = Paint().apply { color = Color.BLUE; isAntiAlias = true; style = Paint.Style.FILL }
+    private val whiteStroke = Paint().apply { color = Color.WHITE; isAntiAlias = true; style = Paint.Style.STROKE; strokeWidth = 5f }
+    private val redDotPaint = Paint().apply { color = Color.RED; isAntiAlias = true; style = Paint.Style.FILL }
+    private val linePaint = Paint().apply { color = Color.GREEN; isAntiAlias = true; style = Paint.Style.STROKE; strokeWidth = 3f }
+
+    init {
+        if (savedJson != null) {
+            try {
+                val jsonArray = JSONArray(savedJson)
+                for (i in 0 until 4) {
+                    val obj = jsonArray.getJSONObject(i)
+                    points.add(PointF(obj.getDouble("x").toFloat(), obj.getDouble("y").toFloat()))
+                }
+            } catch (e: Exception) {
+                createDefaultPoints()
+            }
+        } else {
+            createDefaultPoints()
+        }
+    }
+
+    private fun createDefaultPoints() {
+        points.clear()
+        // Bikin kotak default di tengah layar
+        points.add(PointF(200f, 500f))   // Kiri Atas
+        points.add(PointF(600f, 500f))   // Kanan Atas
+        points.add(PointF(600f, 1000f))  // Kanan Bawah
+        points.add(PointF(200f, 1000f))  // Kiri Bawah
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         
-        for (i in points.indices) {
-            canvas.drawCircle(points[i].x, points[i].y, 40f, paint)
-            canvas.drawCircle(points[i].x, points[i].y, 40f, strokePaint)
-            canvas.drawText("${i + 1}", points[i].x, points[i].y + 15, textPaint)
-        }
+        if (points.size < 4) return
         
-        // FITUR BARU: Kalau udah 4 titik, gambar preview grid 8x8!
-        if (points.size == 4) {
-            val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
-            val matrix = Homography.getPerspectiveTransform(src, points)
-            for (r in 0..7) {
-                for (c in 0..7) {
-                    val pt = Homography.transformPoint(matrix, PointF(c + 0.5f, r + 0.5f))
-                    canvas.drawCircle(pt.x, pt.y, 6f, dotPaint)
-                }
+        // Gambar garis kotak
+        canvas.drawLine(points[0].x, points[0].y, points[1].x, points[1].y, linePaint)
+        canvas.drawLine(points[1].x, points[1].y, points[2].x, points[2].y, linePaint)
+        canvas.drawLine(points[2].x, points[2].y, points[3].x, points[3].y, linePaint)
+        canvas.drawLine(points[3].x, points[3].y, points[0].x, points[0].y, linePaint)
+
+        // Gambar 64 titik merah preview papan
+        val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
+        val matrix = Homography.getPerspectiveTransform(src, points)
+        for (r in 0..7) {
+            for (c in 0..7) {
+                val pt = Homography.transformPoint(matrix, PointF(c + 0.5f, r + 0.5f))
+                canvas.drawCircle(pt.x, pt.y, 8f, redDotPaint)
             }
+        }
+
+        // Gambar 4 titik handle (biru)
+        for (i in 0..3) {
+            canvas.drawCircle(points[i].x, points[i].y, 40f, bluePaint)
+            canvas.drawCircle(points[i].x, points[i].y, 40f, whiteStroke)
         }
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action == MotionEvent.ACTION_DOWN) {
-            if (points.size >= 4) points.clear() // Tap lagi buat ngulang
-            points.add(PointF(event.x, event.y))
-            onPointsChanged(points.size)
-            invalidate()
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                // Cari titik mana yang disentuh (jarak < 100px)
+                for (i in 0..3) {
+                    val dx = event.x - points[i].x
+                    val dy = event.y - points[i].y
+                    if (Math.sqrt((dx * dx + dy * dy).toDouble()) < 100.0) {
+                        activePointIndex = i
+                        break
+                    }
+                }
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (activePointIndex != -1) {
+                    points[activePointIndex] = PointF(event.x, event.y)
+                    invalidate() // Update gambar
+                    onMoved()
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                activePointIndex = -1
+            }
         }
         return true
     }
