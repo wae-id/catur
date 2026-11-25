@@ -16,9 +16,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnOverlay: Button
     private lateinit var btnStart: Button
+    private lateinit var btnCalibrate: Button
     private lateinit var statusText: TextView
 
-    // Launcher buat minta izin rekam layar (MediaProjection)
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -51,10 +51,7 @@ class MainActivity : AppCompatActivity() {
             text = "1. Izinkan Overlay"
             setOnClickListener {
                 if (!Settings.canDrawOverlays(this@MainActivity)) {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:$packageName")
-                    )
+                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
                     startActivity(intent)
                 } else {
                     statusText.text = "Status: Overlay Diizinkan"
@@ -74,9 +71,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        btnCalibrate = Button(this).apply {
+            text = "3. Kalibrasi Papan (4 Titik)"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
+            }
+        }
+
         layout.addView(statusText)
         layout.addView(btnOverlay)
         layout.addView(btnStart)
+        layout.addView(btnCalibrate)
         setContentView(layout)
     }
 }
