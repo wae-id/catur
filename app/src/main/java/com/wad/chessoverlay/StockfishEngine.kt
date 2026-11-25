@@ -15,7 +15,6 @@ class StockfishEngine(private val context: Context) {
 
     fun start() {
         try {
-            // 1. Copy NNUE
             val nnueFile = File(context.filesDir, "nn-5af11540bbfe.nnue")
             if (!nnueFile.exists() || nnueFile.length() < 1000000L) {
                 try {
@@ -30,17 +29,11 @@ class StockfishEngine(private val context: Context) {
                 }
             }
 
-            // 2. Jalanin binary stockfish
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val stockfishFile = File(nativeLibDir, "libstockfish.so")
 
-            // Cek apakah file beneran ada dan ukurannya wajar (min 1MB)
             if (!stockfishFile.exists()) {
                 errorMsg = "File libstockfish.so gak ada"
-                return
-            }
-            if (stockfishFile.length() < 1000000L) {
-                errorMsg = "File libstockfish.so corrupt (HTML)"
                 return
             }
 
@@ -51,7 +44,6 @@ class StockfishEngine(private val context: Context) {
             writer = OutputStreamWriter(process!!.outputStream)
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
-            // 3. Set NNUE & Init
             sendCommand("setoption name EvalFile value ${nnueFile.absolutePath}")
             sendCommand("uci")
             
@@ -60,7 +52,7 @@ class StockfishEngine(private val context: Context) {
                 isReady = true
                 errorMsg = ""
             } else {
-                errorMsg = "Gagal: ${output.take(30)}" // Ambil 30 huruf pertama error
+                errorMsg = "Gagal: ${output.take(30)}"
             }
         } catch (e: Exception) {
             errorMsg = e.message ?: "Error Start"
@@ -88,10 +80,10 @@ class StockfishEngine(private val context: Context) {
     }
 
     fun getBestMove(fen: String): String {
-        if (!isReady) return "Gagal: $errorMsg"
+        if (!isReady) return ""
         
         sendCommand("position fen $fen")
-        sendCommand("go depth 10")
+        sendCommand("go movetime 1000") // Paksa mikir 1 detik dan langsung jawab
         
         var bestMove = ""
         try {
@@ -103,9 +95,9 @@ class StockfishEngine(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            return "Error baca langkah"
+            return ""
         }
-        return if (bestMove.isNotEmpty()) bestMove else "Tidak ada langkah"
+        return bestMove
     }
 
     fun stop() {
