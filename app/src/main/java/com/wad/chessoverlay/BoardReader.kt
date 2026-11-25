@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PointF
 import org.json.JSONArray
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -61,12 +62,12 @@ class BoardReader(private val context: Context) {
         row: Int,
         col: Int
     ): Char {
-        // 1. Ambil warna latar asli kotak dari 4 sudut kotak
+        // 1. Ambil sampel warna latar kotak dari 4 sudut dalam kotak
         val cornerOffsets = arrayOf(
-            0.10f to 0.10f,
-            0.90f to 0.10f,
-            0.10f to 0.90f,
-            0.90f to 0.90f
+            0.12f to 0.12f,
+            0.88f to 0.12f,
+            0.12f to 0.88f,
+            0.88f to 0.88f
         )
 
         var bgR = 0.0
@@ -91,32 +92,44 @@ class BoardReader(private val context: Context) {
         bgR /= bgCount
         bgG /= bgCount
         bgB /= bgCount
+        val bgWarmth = bgR - bgB
 
-        // 2. Pindai siluet bidak di bagian dalam kotak (grid 12x12)
+        // 2. Pindai area dalam kotak (grid 12x12) menggunakan jarak warna + saturasi + gradien tepi
         val gridSize = 12
         val mask = Array(gridSize) { BooleanArray(gridSize) }
         val luminances = mutableListOf<Double>()
 
         for (gy in 0 until gridSize) {
-            val v = 0.16f + (gy.toFloat() / (gridSize - 1)) * 0.68f
+            val v = 0.18f + (gy.toFloat() / (gridSize - 1)) * 0.64f
             for (gx in 0 until gridSize) {
-                val u = 0.16f + (gx.toFloat() / (gridSize - 1)) * 0.68f
+                val u = 0.18f + (gx.toFloat() / (gridSize - 1)) * 0.64f
                 val pt = Homography.transformPoint(matrix, PointF(col + u, row + v))
                 val px = pt.x.toInt()
                 val py = pt.y.toInt()
-                if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
+
+                if (px in 2 until (bitmap.width - 2) && py in 2 until (bitmap.height - 2)) {
                     val c = bitmap.getPixel(px, py)
                     val r = Color.red(c).toDouble()
                     val g = Color.green(c).toDouble()
                     val b = Color.blue(c).toDouble()
 
-                    val dist = sqrt(
+                    val colorDist = sqrt(
                         (r - bgR) * (r - bgR) +
                         (g - bgG) * (g - bgG) +
                         (b - bgB) * (b - bgB)
                     )
 
-                    if (dist > 38.0) {
+                    // Perbedaan saturasi (mengatasi bidak putih di atas papan krem/kuning)
+                    val warmthDiff = abs((r - b) - bgWarmth)
+
+                    // Gradien lokal (mendeteksi garis tepi/bayangan bidak pada petak datar)
+                    val cRight = bitmap.getPixel(px + 2, py)
+                    val cDown = bitmap.getPixel(px, py + 2)
+                    val edgeDiff = abs(r - Color.red(cRight)) +
+                        abs(g - Color.green(cRight)) +
+                        abs(b - Color.blue(cDown))
+
+                    if (colorDist > 24.0 || (colorDist > 14.0 && warmthDiff > 22.0) || edgeDiff > 36.0) {
                         mask[gy][gx] = true
                         val lum = 0.299 * r + 0.587 * g + 0.114 * b
                         luminances.add(lum)
@@ -125,15 +138,14 @@ class BoardReader(private val context: Context) {
             }
         }
 
-        // Jika piksel berbeda < 14 dari 144 titik, kotak dianggap kosong
-        if (luminances.size < 14) return '.'
+        if (luminances.size < 12) return '.'
 
-        // 3. Tentukan warna bidak dari persentil ke-75 kecerahan (mengabaikan garis tepi hitam)
+        // 3. Gunakan persentil ke-85 kecerahan (isi utama bidak, mengabaikan garis tepi hitam)
         luminances.sort()
-        val p75Lum = luminances[(luminances.size * 0.75).toInt().coerceIn(0, luminances.lastIndex)]
-        val isWhite = p75Lum > 145.0
+        val p85Lum = luminances[(luminances.size * 0.85).toInt().coerceIn(0, luminances.lastIndex)]
+        val isWhite = p85Lum > 165.0
 
-        // 4. Klasifikasi bentuk siluet bidak
+        // 4. Klasifikasi bentuk siluet untuk fallback tengah permainan
         val pieceType = classifySilhouette(mask)
         return if (isWhite) pieceType.uppercaseChar() else pieceType.lowercaseChar()
     }
@@ -175,13 +187,12 @@ class BoardReader(private val context: Context) {
         val topWidth = max(rowWidths[minY], rowWidths[(minY + 1).coerceAtMost(maxY)])
         val midY = minY + height / 2
         val midWidth = rowWidths[midY]
-        val baseWidth = max(rowWidths[maxY], rowWidths[(maxY - 1).coerceAtLeast(minY)])
         val maxSegmentsTop = max(rowSegments[minY], rowSegments[(minY + 1).coerceAtMost(maxY)])
 
         return when {
             maxSegmentsTop >= 2 && topWidth >= 5 -> 'Q'
             topWidth >= 5 && height in 7..9 -> 'R'
-            height >= 10 && topWidth <= 3 -> 'K'
+            height >= 10 && topWidth <= 4 -> 'K'
             height >= 9 && midWidth >= 5 && topWidth <= 4 -> 'B'
             midWidth >= 6 && topWidth in 3..5 -> 'N'
             else -> 'P'
