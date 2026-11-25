@@ -12,7 +12,6 @@ class ChessLogic {
     }
 
     fun toFEN(turn: String = "w", isFlipped: Boolean = false): String {
-        // Kalau main sebagai hitam (papan kebalik), kita balik array-nya
         val workBoard = Array(8) { CharArray(8) { '.' } }
         for (r in 0..7) {
             for (c in 0..7) {
@@ -24,9 +23,22 @@ class ChessLogic {
             }
         }
 
-        // Paksa ada Raja biar FEN legal
-        if (!workBoard.any { it.contains('K') }) workBoard[7][4] = 'K' // Putih di e1
-        if (!workBoard.any { it.contains('k') }) workBoard[0][4] = 'k' // Hitam di e8
+        // BATASI PION MAKSIMAL 8 BIAR FEN LEGAL
+        var wp = 0
+        var bp = 0
+        for (r in 0..7) {
+            for (c in 0..7) {
+                if (workBoard[r][c] == 'w' && wp < 8) wp++
+                else if (workBoard[r][c] == 'w') workBoard[r][c] = '.'
+                
+                if (workBoard[r][c] == 'b' && bp < 8) bp++
+                else if (workBoard[r][c] == 'b') workBoard[r][c] = '.'
+            }
+        }
+
+        // PAKSA RAJA ADA BIAR STOCKFISH MAU MIKIR
+        workBoard[7][4] = 'K' 
+        workBoard[0][4] = 'k'
 
         val sb = StringBuilder()
         for (r in 0..7) {
