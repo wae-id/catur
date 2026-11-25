@@ -9,6 +9,7 @@ import org.json.JSONArray
 class BoardReader(private val context: Context) {
     
     private val chessLogic = ChessLogic()
+    var isUserPlayingBlack = false // <--- TAMBAHAN BUAT NANDAIN KAMU MAIN HITAM
 
     fun loadCalibration(): List<PointF>? {
         val prefs = context.getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
@@ -41,7 +42,6 @@ class BoardReader(private val context: Context) {
                 val center = Homography.transformPoint(matrix, PointF(col + 0.5f, row + 0.5f))
                 try {
                     var totalR = 0; var totalG = 0; var totalB = 0; var count = 0
-                    // Ambil sample lebih banyak (7x7 pixel) biar stabil
                     for (dx in -3..3) {
                         for (dy in -3..3) {
                             val px = center.x.toInt() + dx
@@ -55,16 +55,15 @@ class BoardReader(private val context: Context) {
                     }
                     val r = totalR / count; val g = totalG / count; val b = totalB / count
                     
-                    // LOGIKA BARU: Lebih ketat bedain Putih, Hitam, sama Papan (Coklat)
-                    // Putih: RGB tinggi semua
-                    if (r > 190 && g > 190 && b > 190) {
+                    // Deteksi Putih (Terang)
+                    if (r > 180 && g > 180 && b > 180) {
                         newBoard[row][col] = 'w'
                     } 
-                    // Hitam: RGB rendah semua DAN warnanya cenderung netral (bukan coklat gelap)
-                    else if (r < 110 && g < 110 && b < 110 && Math.abs(r - g) < 30 && Math.abs(r - b) < 30) {
+                    // Deteksi Hitam (Gelap dan netral, bukan coklat)
+                    else if (r < 100 && g < 100 && b < 100 && Math.abs(r - g) < 20) {
                         newBoard[row][col] = 'b'
                     } 
-                    // Kosong (Papan coklat: Red lebih tinggi dari Green/Blue)
+                    // Kosong (Papan coklat/terang)
                     else {
                         newBoard[row][col] = '.'
                     }
@@ -72,6 +71,9 @@ class BoardReader(private val context: Context) {
             }
         }
         chessLogic.updateBoard(newBoard)
-        return chessLogic.toFEN("w") // Anggap selalu giliran Putih buat ngetes
+        
+        // Kalo main hitam, giliran kita "b", dan papannya dibalik
+        val turn = if (isUserPlayingBlack) "b" else "w"
+        return chessLogic.toFEN(turn, isUserPlayingBlack)
     }
 }
