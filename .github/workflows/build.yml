@@ -22,9 +22,8 @@ jobs:
 
     - name: Download Stockfish Binary
       run: |
-        mkdir -p app/src/main/assets
-        curl -L -o app/src/main/assets/stockfish https://github.com/official-stockfish/Stockfish/releases/download/sf_16.1/stockfish-android-arm64
-        chmod +x app/src/main/assets/stockfish
+        mkdir -p app/src/main/jniLibs/arm64-v8a
+        curl -L -o app/src/main/jniLibs/arm64-v8a/libstockfish.so https://github.com/official-stockfish/Stockfish/releases/download/sf_16.1/stockfish-android-arm64
 
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
