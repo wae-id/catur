@@ -1,35 +1,25 @@
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-}
-
 android {
     namespace = "com.wad.chessoverlay"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.wad.chessoverlay"
-        minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        // ... (biarin aja sama)
+    }
+
+    // TAMBAHIN BLOK INI WAD
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
+        // ... (biarin aja sama)
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // ... (biarin aja sama)
     }
     kotlinOptions {
-        jvmTarget = "17"
+        // ... (biarin aja sama)
     }
-}
-
-dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
 }
