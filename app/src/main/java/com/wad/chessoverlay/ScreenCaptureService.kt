@@ -6,10 +6,16 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
+import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.TextView
@@ -18,8 +24,17 @@ import androidx.core.app.NotificationCompat
 class ScreenCaptureService : Service() {
 
     private var mediaProjection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+
     private lateinit var windowManager: WindowManager
     private var overlayView: TextView? = null
+
+    private var handlerThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
+    
+    private var frameCount = 0
+    private var lastFpsTime = 0L
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -48,11 +63,55 @@ class ScreenCaptureService : Service() {
                 val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
                 
-                // Buat overlay kotak kecil buat ngetes
                 showOverlay()
+                startCapture()
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun startCapture() {
+        val metrics = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        val density = metrics.densityDpi
+
+        handlerThread = HandlerThread("ScreenCaptureThread")
+        handlerThread?.start()
+        backgroundHandler = handlerThread?.let { Handler(it.looper) }
+
+        // Siapin ImageReader (format RGBA)
+        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        
+        imageReader?.setOnImageAvailableListener({ reader ->
+            val image = reader.acquireLatestImage()
+            if (image != null) {
+                // Buang image biar memori engga penuh (nanti kita proses di sini)
+                image.close()
+                
+                frameCount++
+                val currentTime = System.currentTimeMillis()
+                if (currentTime - lastFpsTime >= 1000) {
+                    val fps = frameCount
+                    frameCount = 0
+                    lastFpsTime = currentTime
+                    
+                    // Update teks overlay di main thread
+                    Handler(mainLooper).post {
+                        overlayView?.text = "Capture: $fps FPS\n${width}x${height} px"
+                    }
+                }
+            }
+        }, backgroundHandler)
+
+        // Bikin Virtual Display (Nembak layar ke ImageReader)
+        virtualDisplay = mediaProjection?.createVirtualDisplay(
+            "ChessCapture",
+            width, height, density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface, null, backgroundHandler
+        )
     }
 
     private fun showOverlay() {
@@ -74,9 +133,9 @@ class ScreenCaptureService : Service() {
         }
 
         overlayView = TextView(this).apply {
-            text = "Overlay Aktif!\n(yuki siap baca layar)"
-            setBackgroundColor(0xAA000000.toInt()) // Hitam transparan
-            setTextColor(0xFFFFFFFF.toInt()) // Teks putih
+            text = "Memulai Capture..."
+            setBackgroundColor(0xAA000000.toInt())
+            setTextColor(0xFF00FF00.toInt()) // Warna hijau matrix
             setPadding(30, 30, 30, 30)
             textSize = 14f
         }
@@ -91,15 +150,14 @@ class ScreenCaptureService : Service() {
                 "Screen Capture",
                 NotificationManager.IMPORTANCE_LOW
             )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Sedang menyiapkan papan catur...")
+            .setContentText("Merekam layar untuk analisis catur...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -109,6 +167,12 @@ class ScreenCaptureService : Service() {
         super.onDestroy()
         overlayView?.let { windowManager.removeView(it) }
         overlayView = null
+        
+        virtualDisplay?.release()
+        imageReader?.close()
         mediaProjection?.stop()
+        
+        backgroundHandler?.removeCallbacksAndMessages(null)
+        handlerThread?.quitSafely()
     }
 }
