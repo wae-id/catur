@@ -64,6 +64,7 @@ class ScreenCaptureService : Service() {
 
             val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
             val dataIntent = intent.getParcelableExtra<Intent>(EXTRA_DATA_INTENT)
+            boardReader.isUserPlayingBlack = intent.getBooleanExtra("IS_BLACK", false) // <-- Baca warna
             
             if (dataIntent != null) {
                 val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -101,7 +102,8 @@ class ScreenCaptureService : Service() {
                     lastFpsTime = currentTime
                     
                     Handler(mainLooper).post {
-                        overlayView?.fpsText = "FPS: $fps | Engine Ready"
+                        val side = if (boardReader.isUserPlayingBlack) "Hitam" else "Putih"
+                        overlayView?.fpsText = "FPS: $fps | Engine ($side)"
                         overlayView?.invalidate()
                     }
                 }
@@ -138,9 +140,8 @@ class ScreenCaptureService : Service() {
             val currentPoints = boardReader.loadCalibration()
             
             val currentTime = System.currentTimeMillis()
-            if (currentTime - lastEngineTime >= 2000) {
+            if (currentTime - lastEngineTime >= 2500) { // Tiap 2.5 detik
                 lastEngineTime = currentTime
-                // Panggil FEN beneran hasil scan, bukan statis lagi
                 val fen = boardReader.scanFullBoard(bitmap) 
                 
                 Thread {
