@@ -27,25 +27,23 @@ jobs:
     - name: Download NNUE
       run: |
         mkdir -p app/src/main/assets
+        # Ambil file NNUE terbaru yang dipake Stockfish
         curl -L -o app/src/main/assets/nn-5af11540bbfe.nnue https://tests.stockfishchess.org/api/nn/nn-5af11540bbfe.nnue
 
     - name: Compile Stockfish for Android
       run: |
-        # 1. Set path NDK dan Compiler Android secara eksplisit
         export NDK=$ANDROID_HOME/ndk/25.2.9519653
         export TARGET=aarch64-linux-android
         export API=21
         export CC=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${TARGET}${API}-clang
         export CXX=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${TARGET}${API}-clang++
         
-        # 2. Clone kode sumber
         git clone https://github.com/official-stockfish/Stockfish.git
         cd Stockfish/src
         
-        # 3. Kasih tau make untuk pakai CC dan CXX yang udah kita set
-        make -j build ARCH=arm64 COMP=ndk CC=$CC CXX=$CXX
+        # KUNCI PERUBAHAN: Pakai ARCH=armv8, bukan arm64
+        make -j build ARCH=armv8 COMP=ndk CC=$CC CXX=$CXX
         
-        # 4. Pindahin ke project
         mkdir -p ../../app/src/main/jniLibs/arm64-v8a
         cp stockfish ../../app/src/main/jniLibs/arm64-v8a/libstockfish.so
         
