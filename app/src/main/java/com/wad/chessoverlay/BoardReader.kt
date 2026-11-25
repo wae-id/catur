@@ -43,22 +43,37 @@ class BoardReader(private val context: Context) {
                 val center = Homography.transformPoint(matrix, PointF(col + 0.5f, row + 0.5f))
                 
                 try {
-                    val pixelColor = screenBitmap.getPixel(center.x.toInt(), center.y.toInt())
+                    // Ambil warna rata-rata dari area kecil (3x3 pixel) biar anti-noise
+                    var totalR = 0
+                    var totalG = 0
+                    var totalB = 0
+                    var count = 0
                     
-                    // Hitung kecerahan (0-255)
-                    val r = Color.red(pixelColor)
-                    val g = Color.green(pixelColor)
-                    val b = Color.blue(pixelColor)
-                    val brightness = (r * 0.299 + g * 0.587 + b * 0.114)
+                    for (dx in -2..2) {
+                        for (dy in -2..2) {
+                            val px = center.x.toInt() + dx
+                            val py = center.y.toInt() + dy
+                            if (px in 0 until screenBitmap.width && py in 0 until screenBitmap.height) {
+                                val c = screenBitmap.getPixel(px, py)
+                                totalR += Color.red(c)
+                                totalG += Color.green(c)
+                                totalB += Color.blue(c)
+                                count++
+                            }
+                        }
+                    }
                     
-                    // Heuristik sederhana: > 120 = cerah (putih), < 90 = gelap (hitam)
-                    // Kalau di antara itu, anggap kosong atau bayangan
-                    if (brightness > 130) {
-                        newBoard[row][col] = 'w'
-                    } else if (brightness < 80) {
-                        newBoard[row][col] = 'b'
+                    val r = totalR / count
+                    val g = totalG / count
+                    val b = totalB / count
+                    
+                    // Deteksi Bidak (Heuristik Baru)
+                    if (r > 180 && g > 180 && b > 180) {
+                        newBoard[row][col] = 'w' // Putih
+                    } else if (r < 95 && g < 95 && b < 95) {
+                        newBoard[row][col] = 'b' // Hitam (Abu-abu gelap)
                     } else {
-                        newBoard[row][col] = '.'
+                        newBoard[row][col] = '.' // Kosong (Coklat papan)
                     }
                     
                 } catch (e: Exception) {
