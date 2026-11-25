@@ -1,12 +1,21 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
 android {
     namespace = "com.wad.chessoverlay"
     compileSdk = 34
 
     defaultConfig {
-        // ... (biarin aja sama)
+        applicationId = "com.wad.chessoverlay"
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
     }
 
-    // TAMBAHIN BLOK INI WAD
+    // Ini yang bikin Stockfish engga di-compress Android
     packaging {
         jniLibs {
             useLegacyPackaging = true
@@ -14,12 +23,22 @@ android {
     }
 
     buildTypes {
-        // ... (biarin aja sama)
+        release {
+            isMinifyEnabled = false
+        }
     }
+    
     compileOptions {
-        // ... (biarin aja sama)
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
+    
     kotlinOptions {
-        // ... (biarin aja sama)
+        jvmTarget = "17"
     }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
 }
