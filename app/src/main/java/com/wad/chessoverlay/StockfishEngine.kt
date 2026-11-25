@@ -15,9 +15,9 @@ class StockfishEngine(private val context: Context) {
 
     fun start() {
         try {
-            // 1. Copy NNUE file dari assets ke internal storage
+            // 1. Copy NNUE
             val nnueFile = File(context.filesDir, "nn-5af11540bbfe.nnue")
-            if (!nnueFile.exists()) {
+            if (!nnueFile.exists() || nnueFile.length() < 1000000L) {
                 try {
                     val nnueStream = context.assets.open("nn-5af11540bbfe.nnue")
                     val outStream = nnueFile.outputStream()
@@ -34,8 +34,13 @@ class StockfishEngine(private val context: Context) {
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val stockfishFile = File(nativeLibDir, "libstockfish.so")
 
+            // Cek apakah file beneran ada dan ukurannya wajar (min 1MB)
             if (!stockfishFile.exists()) {
                 errorMsg = "File libstockfish.so gak ada"
+                return
+            }
+            if (stockfishFile.length() < 1000000L) {
+                errorMsg = "File libstockfish.so corrupt (HTML)"
                 return
             }
 
@@ -46,17 +51,16 @@ class StockfishEngine(private val context: Context) {
             writer = OutputStreamWriter(process!!.outputStream)
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
-            // 3. Kasih tau Stockfish lokasi NNUE-nya
+            // 3. Set NNUE & Init
             sendCommand("setoption name EvalFile value ${nnueFile.absolutePath}")
             sendCommand("uci")
             
             val output = waitFor("uciok")
             if (output.contains("uciok")) {
                 isReady = true
-                errorMsg = "" // Bersihin error
+                errorMsg = ""
             } else {
-                // Kalo gagal, simpen output aslinya biar kita tau kenapa
-                errorMsg = "Output: ${output.take(50)}" 
+                errorMsg = "Gagal: ${output.take(30)}" // Ambil 30 huruf pertama error
             }
         } catch (e: Exception) {
             errorMsg = e.message ?: "Error Start"
