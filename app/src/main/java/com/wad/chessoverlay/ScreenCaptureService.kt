@@ -126,37 +126,24 @@ class ScreenCaptureService : Service() {
         if (!boardReader.isBoardReady()) return
         
         try {
-            val planes = image.planes
-            val buffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * width
-            
-            val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(buffer)
-
-            val boardString = boardReader.scanFullBoard(bitmap)
             val currentPoints = boardReader.loadCalibration()
             
             // Logika Panggil Stockfish (Tiap 2 Detik)
             val currentTime = System.currentTimeMillis()
             if (currentTime - lastEngineTime >= 2000) {
                 lastEngineTime = currentTime
+                // Ambil FEN statis dulu biar panahnya keluar
                 val fen = boardReader.getFen()
                 
-                // Panggil Engine di background thread
                 Thread {
                     val bestMove = engine.getBestMove(fen)
                     Handler(mainLooper).post {
-                        overlayView?.boardText = "FEN: $fen\nBest Move: $bestMove\n\nPapan:\n$boardString"
-                        overlayView?.bestMove = bestMove // <--- Kirim langkah ke Canvas
+                        overlayView?.bestMove = bestMove 
                         overlayView?.points = currentPoints
                         overlayView?.invalidate()
                     }
                 }.start()
             }
-            
-            bitmap.recycle()
         } catch (e: Exception) {}
     }
 
