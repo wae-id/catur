@@ -22,9 +22,6 @@ class CalibrationActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Bikin window-nya transparan
-        window.setBackgroundDrawableResource(android.R.color.transparent)
-        
         val layout = FrameLayout(this)
         touchView = CalibrationView(this) { count ->
             statusText.text = if (count < 4) "Tap pojok papan: $count/4" else "Semua titik siap! Klik Simpan."
