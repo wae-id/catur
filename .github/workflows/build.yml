@@ -27,28 +27,82 @@ jobs:
           gradle-version: '8.7'
 
       - name: Download Stockfish Engine (ARM64)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p app/src/main/jniLibs/arm64-v8a
-          URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/official-stockfish/Stockfish/releases/latest \
-            | grep "browser_download_url" \
-            | grep "android-armv8" \
-            | grep "\.tar" \
-            | cut -d '"' -f 4 | head -n 1)
-          if [ -z "$URL" ]; then
-            echo "Error: URL binary Stockfish tidak ditemukan."
-            exit 1
-          fi
-          curl -L "$URL" -o stockfish.tar
-          tar -xf stockfish.tar
-          FOUND=$(find . -maxdepth 3 -type f -name "stockfish*armv8*" ! -name "*.tar" | head -n 1)
-          if [ -z "$FOUND" ]; then
-            echo "Error: File binary hasil ekstrak tidak ditemukan."
-            exit 1
-          fi
-          cp "$FOUND" app/src/main/jniLibs/arm64-v8a/libstockfish.so
-          chmod +x app/src/main/jniLibs/arm64-v8a/libstockfish.so
-          rm -rf stockfish.tar stockfish
+          python3 - << 'EOF'
+          import json, os, sys, tarfile, urllib.request, zipfile
+
+          api_url = "https://api.github.com/repos/official-stockfish/Stockfish/releases?per_page=30"
+          req = urllib.request.Request(api_url, headers={
+              "User-Agent": "GitHub-Actions-Build",
+              "Accept": "application/vnd.github+json"
+          })
+          token = os.environ.get("GH_TOKEN")
+          if token:
+              req.add_header("Authorization", f"Bearer {token}")
+
+          with urllib.request.urlopen(req, timeout=30) as resp:
+              releases = json.loads(resp.read().decode("utf-8"))
+
+          target_url = None
+          target_name = None
+
+          for rel in releases:
+              assets = rel.get("assets", [])
+              android_assets = [
+                  a for a in assets
+                  if "android" in a["name"].lower() and ("armv8" in a["name"].lower() or "arm64" in a["name"].lower())
+              ]
+              if android_assets:
+                  # Utamakan varian universal (non-dotprod) agar berjalan di semua HP Android ARM64
+                  android_assets.sort(key=lambda a: ("dotprod" in a["name"].lower(), len(a["name"])))
+                  target_url = android_assets[0]["browser_download_url"]
+                  target_name = android_assets[0]["name"]
+                  break
+
+          if not target_url:
+              print("Asset Android ARM64 tidak ditemukan. Asset yang tersedia di rilis terbaru:")
+              if releases:
+                  for a in releases[0].get("assets", []):
+                      print(" -", a["name"])
+              sys.exit(1)
+
+          print(f"Mengunduh {target_name} dari {target_url}")
+          archive_path = f"/tmp/{target_name}"
+          urllib.request.urlretrieve(target_url, archive_path)
+
+          extract_dir = "/tmp/stockfish_extract"
+          os.makedirs(extract_dir, exist_ok=True)
+
+          if target_name.endswith(".zip"):
+              with zipfile.ZipFile(archive_path, "r") as zf:
+                  zf.extractall(extract_dir)
+          else:
+              with tarfile.open(archive_path, "r:*") as tf:
+                  tf.extractall(extract_dir)
+
+          best_file = None
+          best_size = 0
+          for root, _, files in os.walk(extract_dir):
+              for f in files:
+                  full_path = os.path.join(root, f)
+                  size = os.path.getsize(full_path)
+                  if size > best_size:
+                      best_size = size
+                      best_file = full_path
+
+          if not best_file or best_size < 5_000_000:
+              print(f"File binary valid tidak ditemukan (ukuran terbesar: {best_size} bytes).")
+              sys.exit(1)
+
+          dest = "app/src/main/jniLibs/arm64-v8a/libstockfish.so"
+          with open(best_file, "rb") as src, open(dest, "wb") as dst:
+              dst.write(src.read())
+          os.chmod(dest, 0o755)
+          print(f"Berhasil menyalin {best_file} ({best_size} bytes) ke {dest}")
+          EOF
 
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
