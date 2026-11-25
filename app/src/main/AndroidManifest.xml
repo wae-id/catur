@@ -12,18 +12,22 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
         
+        <!-- Activity Utama -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
-        <activity
-            android:name=".CalibrationActivity"
-            android:exported="false" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
+        <!-- Activity Kalibrasi (Harus di luar MainActivity) -->
+        <activity
+            android:name=".CalibrationActivity"
+            android:exported="false" />
+
+        <!-- Service Capture -->
         <service
             android:name=".ScreenCaptureService"
             android:foregroundServiceType="mediaProjection"
