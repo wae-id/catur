@@ -17,9 +17,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.util.DisplayMetrics
-import android.view.Gravity
 import android.view.WindowManager
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
@@ -29,7 +27,7 @@ class ScreenCaptureService : Service() {
     private var imageReader: ImageReader? = null
 
     private lateinit var windowManager: WindowManager
-    private var overlayView: TextView? = null
+    private var overlayView: OverlayCanvasView? = null
     private lateinit var boardReader: BoardReader
 
     private var handlerThread: HandlerThread? = null
@@ -93,21 +91,19 @@ class ScreenCaptureService : Service() {
                 frameCount++
                 val currentTime = System.currentTimeMillis()
                 
-                // Update FPS tiap detik
+                // Update FPS aja
                 if (currentTime - lastFpsTime >= 1000) {
                     val fps = frameCount
                     frameCount = 0
                     lastFpsTime = currentTime
                     
                     Handler(mainLooper).post {
-                        val isReady = boardReader.isBoardReady()
-                        val statusText = if (isReady) "Kalibrasi OK" else "Kalibrasi Belum Ada!"
-                        // Update kecil aja di judul atas
-                        overlayView?.text = "FPS: $fps | $statusText\nMemindai papan..."
+                        overlayView?.fpsText = "FPS: $fps | Kalibrasi OK"
+                        overlayView?.invalidate()
                     }
                 }
 
-                // Proses baca papan tiap 500ms
+                // Proses baca papan
                 if (currentTime - lastProcessTime >= 500) {
                     lastProcessTime = currentTime
                     processBoardImage(image, width, height)
@@ -139,45 +135,39 @@ class ScreenCaptureService : Service() {
             bitmap.copyPixelsFromBuffer(buffer)
 
             val boardString = boardReader.scanFullBoard(bitmap)
+            val currentPoints = boardReader.loadCalibration()
             
             Handler(mainLooper).post {
-                overlayView?.textSize = 12f 
-                overlayView?.text = "Papan:\n$boardString"
-                overlayView?.setTextColor(0xFF00FF00.toInt())
+                overlayView?.boardText = "Papan:\n$boardString"
+                overlayView?.points = currentPoints // Update titik buat gambar lingkaran merah
+                overlayView?.invalidate()
             }
             
             bitmap.recycle()
         } catch (e: Exception) {
-            Handler(mainLooper).post {
-                overlayView?.text = "Error: ${e.message}"
-            }
+            // diamkan aja kalau error
         }
     }
 
     private fun showOverlay() {
         if (overlayView != null) return
 
+        // Pakai MATCH_PARENT biar bisa gambar titik di seluruh layar
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or 
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, // Biar nutupin status bar juga
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = 50
-            y = 100
-        }
+        )
 
-        overlayView = TextView(this).apply {
-            text = "Memulai Capture..."
-            setBackgroundColor(0xAA000000.toInt())
-            setTextColor(0xFFFFFFFF.toInt())
-            setPadding(30, 30, 30, 30)
-            textSize = 12f
+        overlayView = OverlayCanvasView(this).apply {
+            points = boardReader.loadCalibration()
         }
 
         windowManager.addView(overlayView, params)
