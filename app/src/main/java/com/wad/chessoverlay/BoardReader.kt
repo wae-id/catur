@@ -68,8 +68,7 @@ class BoardReader(private val context: Context) {
     }
 
     fun getFen(): String {
-        // KITA PAKSA PAKAI FEN AWAL CATUR DULU BUAT NGETES ENGINE
-        // rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1
-        return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-    }
+    // PAKSA PAKAI FEN AWAL CATUR (Biar Stockfish ngasih langkah e2e4)
+    return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+  }
 }
