@@ -44,7 +44,7 @@ class ScreenCaptureService : Service() {
     private var frameCount = 0
     private var lastFpsTime = 0L
     private var lastProcessTime = 0L
-    private var lastFen = ""
+    private var lastSolvedFen = ""
     private var currentBestMove = ""
 
     companion object {
@@ -91,12 +91,10 @@ class ScreenCaptureService : Service() {
             }
 
             val isBlack = intent.getBooleanExtra("IS_BLACK", false)
-            if (boardReader.isUserPlayingBlack != isBlack) {
-                boardReader.isUserPlayingBlack = isBlack
-                boardReader.resetGame()
-                lastFen = ""
-                currentBestMove = ""
-            }
+            boardReader.isUserPlayingBlack = isBlack
+            boardReader.resetGame()
+            lastSolvedFen = ""
+            currentBestMove = ""
 
             if (dataIntent != null && resultCode == Activity.RESULT_OK) {
                 val projectionManager =
@@ -136,7 +134,6 @@ class ScreenCaptureService : Service() {
         handlerThread = HandlerThread("ScreenCaptureThread").apply { start() }
         backgroundHandler = Handler(handlerThread!!.looper)
 
-        // Wajib mendaftarkan callback sebelum createVirtualDisplay di Android 14+
         mediaProjection?.registerCallback(projectionCallback, backgroundHandler)
 
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
@@ -154,14 +151,18 @@ class ScreenCaptureService : Service() {
 
                     Handler(mainLooper).post {
                         val side = if (boardReader.isUserPlayingBlack) "Hitam" else "Putih"
-                        val status = if (engine.errorMsg.isNotEmpty()) engine.errorMsg else "Aktif"
+                        val status = when {
+                            engine.errorMsg.isNotEmpty() -> engine.errorMsg
+                            isEngineBusy.get() -> "Menghitung..."
+                            else -> "Aktif"
+                        }
                         overlayView?.fpsText = "FPS: $fps | $side ($status)"
                         overlayView?.invalidate()
                     }
                 }
 
-                // Pindai papan setiap 400ms
-                if (currentTime - lastProcessTime >= 400) {
+                // Pindai papan setiap 250ms agar stabilitas 2-frame tercapai dalam 0.5 detik
+                if (currentTime - lastProcessTime >= 250) {
                     lastProcessTime = currentTime
                     processBoardImage(image, width, height)
                 }
@@ -196,13 +197,12 @@ class ScreenCaptureService : Service() {
                 overlayView?.invalidate()
             }
 
-            // Hanya minta Stockfish berpikir jika posisi papan berubah dan tidak sedang sibuk
-            if (fen.isNotEmpty() && fen != lastFen && isEngineBusy.compareAndSet(false, true)) {
-                lastFen = fen
+            if (fen.isNotEmpty() && fen != lastSolvedFen && isEngineBusy.compareAndSet(false, true)) {
                 engineExecutor.execute {
                     try {
                         val move = engine.getBestMove(fen)
                         if (move.isNotEmpty()) {
+                            lastSolvedFen = fen
                             currentBestMove = move
                             Handler(mainLooper).post {
                                 overlayView?.bestMove = currentBestMove
@@ -267,7 +267,6 @@ class ScreenCaptureService : Service() {
             PixelFormat.TRANSLUCENT
         )
 
-        // Pastikan overlay sejajar penuh hingga area poni/status bar agar cocok dengan tangkapan layar
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             params.layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
