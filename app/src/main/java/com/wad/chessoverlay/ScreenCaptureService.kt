@@ -149,6 +149,7 @@ class ScreenCaptureService : Service() {
                     val bestMove = engine.getBestMove(fen)
                     Handler(mainLooper).post {
                         overlayView?.boardText = "FEN: $fen\nBest Move: $bestMove\n\nPapan:\n$boardString"
+                        overlayView?.bestMove = bestMove // <--- Kirim langkah ke Canvas
                         overlayView?.points = currentPoints
                         overlayView?.invalidate()
                     }
