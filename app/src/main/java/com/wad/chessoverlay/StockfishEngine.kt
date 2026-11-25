@@ -15,17 +15,16 @@ class StockfishEngine(private val context: Context) {
 
     fun start() {
         try {
-            val destFile = File(context.filesDir, "stockfish")
-            if (!destFile.exists() || destFile.length() < 1000L) {
-                val inputStream = context.assets.open("stockfish")
-                val outputStream = destFile.outputStream()
-                inputStream.copyTo(outputStream)
-                inputStream.close()
-                outputStream.close()
-                destFile.setExecutable(true)
+            // Ambil path dari folder nativeLibraryDir (tempat Android naro file dari jniLibs)
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            val stockfishFile = File(nativeLibDir, "libstockfish.so")
+            
+            if (!stockfishFile.exists()) {
+                errorMsg = "File libstockfish.so gak ada"
+                return
             }
 
-            process = ProcessBuilder(destFile.absolutePath).redirectErrorStream(true).start()
+            process = ProcessBuilder(stockfishFile.absolutePath).redirectErrorStream(true).start()
             writer = OutputStreamWriter(process!!.outputStream)
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
@@ -34,7 +33,7 @@ class StockfishEngine(private val context: Context) {
             if (output.contains("uciok")) {
                 isReady = true
             } else {
-                errorMsg = "Gagal UCI"
+                errorMsg = "Gagal UCI init"
             }
         } catch (e: Exception) {
             errorMsg = e.message ?: "Error Start"
@@ -62,10 +61,10 @@ class StockfishEngine(private val context: Context) {
     }
 
     fun getBestMove(fen: String): String {
-        if (!isReady) return "Engine Gagal: $errorMsg"
+        if (!isReady) return "Gagal: $errorMsg"
         
         sendCommand("position fen $fen")
-        sendCommand("go depth 12")
+        sendCommand("go depth 10")
         
         var bestMove = ""
         try {
