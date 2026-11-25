@@ -21,9 +21,6 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -32,9 +29,11 @@ jobs:
       - name: Download Stockfish Engine (ARM64)
         run: |
           mkdir -p app/src/main/jniLibs/arm64-v8a
-          URL=$(curl -s https://api.github.com/repos/official-stockfish/Stockfish/releases/latest \
+          URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/official-stockfish/Stockfish/releases/latest \
             | grep "browser_download_url" \
-            | grep "android-armv8.tar" \
+            | grep "android-armv8" \
+            | grep "\.tar" \
             | cut -d '"' -f 4 | head -n 1)
           if [ -z "$URL" ]; then
             echo "Error: URL binary Stockfish tidak ditemukan."
@@ -42,7 +41,7 @@ jobs:
           fi
           curl -L "$URL" -o stockfish.tar
           tar -xf stockfish.tar
-          FOUND=$(find . -type f -name "stockfish*armv8*" ! -name "*.tar" | head -n 1)
+          FOUND=$(find . -maxdepth 3 -type f -name "stockfish*armv8*" ! -name "*.tar" | head -n 1)
           if [ -z "$FOUND" ]; then
             echo "Error: File binary hasil ekstrak tidak ditemukan."
             exit 1
