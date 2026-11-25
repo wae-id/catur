@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Tema transparan khusus buat layar kalibrasi -->
-    <style name="TransparentTheme" parent="Theme.AppCompat.Light.NoActionBar">
-        <item name="android:windowBackground">@android:color/transparent</item>
+    <style name="AppTheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#1E88E5</item>
+        <item name="colorPrimaryDark">#1565C0</item>
+        <item name="colorAccent">#00E676</item>
+    </style>
+
+    <style name="Theme.ChessOverlay.Translucent" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:backgroundDimEnabled">false</item>
     </style>
 </resources>
