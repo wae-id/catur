@@ -30,7 +30,7 @@ class BoardReader(private val context: Context) {
     fun isBoardReady(): Boolean = loadCalibration() != null
 
     fun scanFullBoard(screenBitmap: Bitmap): String {
-        val points = loadCalibration() ?: return "Kalibrasi Belum Ada!"
+        val points = loadCalibration() ?: return ""
         val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
         val matrix = Homography.getPerspectiveTransform(src, points)
         
@@ -41,8 +41,9 @@ class BoardReader(private val context: Context) {
                 val center = Homography.transformPoint(matrix, PointF(col + 0.5f, row + 0.5f))
                 try {
                     var totalR = 0; var totalG = 0; var totalB = 0; var count = 0
-                    for (dx in -2..2) {
-                        for (dy in -2..2) {
+                    // Ambil sample lebih banyak (7x7 pixel) biar stabil
+                    for (dx in -3..3) {
+                        for (dy in -3..3) {
                             val px = center.x.toInt() + dx
                             val py = center.y.toInt() + dy
                             if (px in 0 until screenBitmap.width && py in 0 until screenBitmap.height) {
@@ -53,22 +54,24 @@ class BoardReader(private val context: Context) {
                         }
                     }
                     val r = totalR / count; val g = totalG / count; val b = totalB / count
-                    if (r > 180 && g > 180 && b > 180) {
+                    
+                    // LOGIKA BARU: Lebih ketat bedain Putih, Hitam, sama Papan (Coklat)
+                    // Putih: RGB tinggi semua
+                    if (r > 190 && g > 190 && b > 190) {
                         newBoard[row][col] = 'w'
-                    } else if (r < 95 && g < 95 && b < 95) {
+                    } 
+                    // Hitam: RGB rendah semua DAN warnanya cenderung netral (bukan coklat gelap)
+                    else if (r < 110 && g < 110 && b < 110 && Math.abs(r - g) < 30 && Math.abs(r - b) < 30) {
                         newBoard[row][col] = 'b'
-                    } else {
+                    } 
+                    // Kosong (Papan coklat: Red lebih tinggi dari Green/Blue)
+                    else {
                         newBoard[row][col] = '.'
                     }
-                } catch (e: Exception) { newBoard[row][col] = '?' }
+                } catch (e: Exception) { newBoard[row][col] = '.' }
             }
         }
         chessLogic.updateBoard(newBoard)
-        return chessLogic.printBoard()
+        return chessLogic.toFEN("w") // Anggap selalu giliran Putih buat ngetes
     }
-
-    fun getFen(): String {
-    // PAKSA PAKAI FEN AWAL CATUR (Biar Stockfish ngasih langkah e2e4)
-    return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-  }
 }
