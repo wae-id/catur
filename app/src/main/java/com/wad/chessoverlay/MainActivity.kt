@@ -17,7 +17,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnOverlay: Button
     private lateinit var btnStart: Button
     private lateinit var btnCalibrate: Button
+    private lateinit var btnSide: Button
     private lateinit var statusText: TextView
+
+    private var isBlack = false
 
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -27,6 +30,7 @@ class MainActivity : AppCompatActivity() {
                 action = ScreenCaptureService.ACTION_START
                 putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                 putExtra(ScreenCaptureService.EXTRA_DATA_INTENT, result.data)
+                putExtra("IS_BLACK", isBlack) // Kirim info warna ke service
             }
             ContextCompat.startForegroundService(this, serviceIntent)
             statusText.text = "Status: Capture Service Running"
@@ -59,6 +63,21 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        btnSide = Button(this).apply {
+            text = "Main Sebagai: PUTIH"
+            setOnClickListener {
+                isBlack = !isBlack
+                text = if (isBlack) "Main Sebagai: HITAM" else "Main Sebagai: PUTIH"
+            }
+        }
+
+        btnCalibrate = Button(this).apply {
+            text = "3. Kalibrasi Papan (4 Titik)"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
+            }
+        }
+
         btnStart = Button(this).apply {
             text = "2. Mulai Capture Layar"
             setOnClickListener {
@@ -71,17 +90,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        btnCalibrate = Button(this).apply {
-            text = "3. Kalibrasi Papan (4 Titik)"
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
-            }
-        }
-
         layout.addView(statusText)
         layout.addView(btnOverlay)
-        layout.addView(btnStart)
+        layout.addView(btnSide)
         layout.addView(btnCalibrate)
+        layout.addView(btnStart)
         setContentView(layout)
     }
 }
