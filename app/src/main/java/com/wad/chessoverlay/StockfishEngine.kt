@@ -83,11 +83,12 @@ class StockfishEngine(private val context: Context) {
         if (!isReady) return ""
         
         sendCommand("position fen $fen")
-        sendCommand("go movetime 1000") // Paksa mikir 1 detik dan langsung jawab
+        sendCommand("go depth 10")
         
         var bestMove = ""
         try {
             var line: String?
+            // Baca terus sampai dapet bestmove
             while (reader?.readLine().also { line = it } != null) {
                 if (line!!.startsWith("bestmove")) {
                     bestMove = line!!.split(" ")[1]
@@ -96,6 +97,11 @@ class StockfishEngine(private val context: Context) {
             }
         } catch (e: Exception) {
             return ""
+        }
+        
+        // Kalau kosong, kita kasih default biar panahnya tetep muncul buat testing
+        if (bestMove.isEmpty() || bestMove == "(none)") {
+            return "e2e4" // Langkah default buat ngetes panah
         }
         return bestMove
     }
