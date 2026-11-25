@@ -13,35 +13,54 @@ class StockfishEngine(private val context: Context) {
     private var isReady = false
     var errorMsg = ""
 
+    @Synchronized
     fun start() {
+        if (isReady && process?.isAlive == true) return
+
         try {
-            val nnueFile = File(context.filesDir, "nn-5af11540bbfe.nnue")
-            if (!nnueFile.exists() || nnueFile.length() < 1000000L) {
-                val nnueStream = context.assets.open("nn-5af11540bbfe.nnue")
-                val outStream = nnueFile.outputStream()
-                nnueStream.copyTo(outStream)
-                nnueStream.close()
-                outStream.close()
-            }
+            stop()
 
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val stockfishFile = File(nativeLibDir, "libstockfish.so")
 
-            process = ProcessBuilder(stockfishFile.absolutePath).redirectErrorStream(true).start()
+            if (!stockfishFile.exists()) {
+                errorMsg = "Binary libstockfish.so tidak ditemukan"
+                isReady = false
+                return
+            }
+
+            process = ProcessBuilder(stockfishFile.absolutePath)
+                .redirectErrorStream(true)
+                .start()
+
             writer = OutputStreamWriter(process!!.outputStream)
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
-            sendCommand("setoption name EvalFile value ${nnueFile.absolutePath}")
+            // 1. Wajib kirim "uci" lebih dulu dan tunggu "uciok"
             sendCommand("uci")
-            
-            val output = waitFor("uciok")
-            if (output.contains("uciok")) {
+            val uciOutput = waitFor("uciok")
+            if (!uciOutput.contains("uciok")) {
+                errorMsg = "Gagal inisialisasi UCI"
+                isReady = false
+                return
+            }
+
+            // 2. Atur opsi setelah uciok (NNUE sudah tertanam di dalam binary Stockfish terbaru)
+            sendCommand("setoption name Threads value 2")
+            sendCommand("setoption name Hash value 32")
+
+            // 3. Pastikan engine siap sebelum menerima posisi FEN
+            sendCommand("isready")
+            val readyOutput = waitFor("readyok")
+            if (readyOutput.contains("readyok")) {
                 isReady = true
+                errorMsg = ""
             } else {
-                errorMsg = "Gagal UCI"
+                errorMsg = "Engine tidak merespons readyok"
+                isReady = false
             }
         } catch (e: Exception) {
-            errorMsg = e.message ?: "Error Start"
+            errorMsg = e.message ?: "Error Start Stockfish"
             isReady = false
         }
     }
@@ -50,7 +69,9 @@ class StockfishEngine(private val context: Context) {
         try {
             writer?.write("$cmd\n")
             writer?.flush()
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            errorMsg = e.message ?: "Error kirim perintah"
+        }
     }
 
     private fun waitFor(token: String): String {
@@ -61,39 +82,64 @@ class StockfishEngine(private val context: Context) {
                 sb.append(line).append("\n")
                 if (line!!.contains(token)) break
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            errorMsg = e.message ?: "Error baca output"
+        }
         return sb.toString()
     }
 
+    @Synchronized
     fun getBestMove(fen: String): String {
-        if (!isReady) return ""
-        
+        if (!isReady || process?.isAlive != true) {
+            start()
+            if (!isReady) return ""
+        }
+
+        if (fen.isBlank()) return ""
+
+        sendCommand("isready")
+        if (!waitFor("readyok").contains("readyok")) return ""
+
         sendCommand("position fen $fen")
         sendCommand("go movetime 1000")
-        
+
         var bestMove = ""
         try {
             var line: String?
             while (reader?.readLine().also { line = it } != null) {
                 if (line!!.startsWith("bestmove")) {
-                    bestMove = line!!.split(" ")[1]
+                    val parts = line!!.trim().split("\\s+".toRegex())
+                    if (parts.size >= 2) {
+                        bestMove = parts[1]
+                    }
                     break
                 }
             }
         } catch (e: Exception) {
             return ""
         }
-        
+
         if (bestMove.isEmpty() || bestMove == "(none)") {
-            return "e2e4" // Fallback darurat biar panah tetep muncul
+            return ""
         }
         return bestMove
     }
 
+    @Synchronized
     fun stop() {
-        sendCommand("quit")
-        process?.destroy()
-        process = null
-        isReady = false
+        try {
+            if (process != null) {
+                sendCommand("quit")
+                writer?.close()
+                reader?.close()
+                process?.destroy()
+            }
+        } catch (_: Exception) {
+        } finally {
+            writer = null
+            reader = null
+            process = null
+            isReady = false
+        }
     }
 }
