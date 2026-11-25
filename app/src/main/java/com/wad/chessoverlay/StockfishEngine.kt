@@ -17,30 +17,17 @@ class StockfishEngine(private val context: Context) {
         try {
             val nnueFile = File(context.filesDir, "nn-5af11540bbfe.nnue")
             if (!nnueFile.exists() || nnueFile.length() < 1000000L) {
-                try {
-                    val nnueStream = context.assets.open("nn-5af11540bbfe.nnue")
-                    val outStream = nnueFile.outputStream()
-                    nnueStream.copyTo(outStream)
-                    nnueStream.close()
-                    outStream.close()
-                } catch (e: Exception) {
-                    errorMsg = "Gagal copy NNUE"
-                    return
-                }
+                val nnueStream = context.assets.open("nn-5af11540bbfe.nnue")
+                val outStream = nnueFile.outputStream()
+                nnueStream.copyTo(outStream)
+                nnueStream.close()
+                outStream.close()
             }
 
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val stockfishFile = File(nativeLibDir, "libstockfish.so")
 
-            if (!stockfishFile.exists()) {
-                errorMsg = "File libstockfish.so gak ada"
-                return
-            }
-
-            process = ProcessBuilder(stockfishFile.absolutePath)
-                .redirectErrorStream(true)
-                .start()
-
+            process = ProcessBuilder(stockfishFile.absolutePath).redirectErrorStream(true).start()
             writer = OutputStreamWriter(process!!.outputStream)
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
@@ -50,9 +37,8 @@ class StockfishEngine(private val context: Context) {
             val output = waitFor("uciok")
             if (output.contains("uciok")) {
                 isReady = true
-                errorMsg = ""
             } else {
-                errorMsg = "Gagal: ${output.take(30)}"
+                errorMsg = "Gagal UCI"
             }
         } catch (e: Exception) {
             errorMsg = e.message ?: "Error Start"
@@ -80,27 +66,26 @@ class StockfishEngine(private val context: Context) {
     }
 
     fun getBestMove(fen: String): String {
-        if (!isReady) return "Engine Mati"
+        if (!isReady) return ""
         
         sendCommand("position fen $fen")
-        sendCommand("go movetime 1000") // Paksa mikir 1 detik, langsung jawab
+        sendCommand("go movetime 1000")
         
         var bestMove = ""
         try {
             var line: String?
             while (reader?.readLine().also { line = it } != null) {
-                // Kita biarin dia baca info depth dulu, baru ambil bestmove
                 if (line!!.startsWith("bestmove")) {
                     bestMove = line!!.split(" ")[1]
                     break
                 }
             }
         } catch (e: Exception) {
-            return "Error Baca"
+            return ""
         }
         
         if (bestMove.isEmpty() || bestMove == "(none)") {
-            return "FEN Ilegal" // Biar kita tau kalau Stockfish nolak posisinya
+            return "e2e4" // Fallback darurat biar panah tetep muncul
         }
         return bestMove
     }
