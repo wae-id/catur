@@ -21,11 +21,11 @@
             </intent-filter>
         </activity>
 
-        <!-- KUNCI TRANSPARAN: Pakai tema Translucent -->
+        <!-- Ubah theme di sini jadi TransparentTheme -->
         <activity
             android:name=".CalibrationActivity"
             android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+            android:theme="@style/TransparentTheme" />
 
         <service
             android:name=".ScreenCaptureService"
