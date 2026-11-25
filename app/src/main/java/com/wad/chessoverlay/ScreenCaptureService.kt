@@ -29,6 +29,7 @@ class ScreenCaptureService : Service() {
 
     private lateinit var windowManager: WindowManager
     private var overlayView: TextView? = null
+    private lateinit var boardReader: BoardReader
 
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
@@ -49,6 +50,7 @@ class ScreenCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        boardReader = BoardReader(this)
         createNotificationChannel()
     }
 
@@ -81,13 +83,11 @@ class ScreenCaptureService : Service() {
         handlerThread?.start()
         backgroundHandler = handlerThread?.let { Handler(it.looper) }
 
-        // Siapin ImageReader (format RGBA)
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         
         imageReader?.setOnImageAvailableListener({ reader ->
             val image = reader.acquireLatestImage()
             if (image != null) {
-                // Buang image biar memori engga penuh (nanti kita proses di sini)
                 image.close()
                 
                 frameCount++
@@ -97,15 +97,23 @@ class ScreenCaptureService : Service() {
                     frameCount = 0
                     lastFpsTime = currentTime
                     
-                    // Update teks overlay di main thread
                     Handler(mainLooper).post {
-                        overlayView?.text = "Capture: $fps FPS\n${width}x${height} px"
+                        val isReady = boardReader.isBoardReady()
+                        val statusText = if (isReady) "Papan Siap (Kalibrasi OK)" else "Kalibrasi Belum Ada!"
+                        
+                        overlayView?.text = "Capture: $fps FPS\n${width}x${height}\n$statusText"
+                        
+                        // Ubah warna teks jadi kuning kalau belum kalibrasi
+                        if (!isReady) {
+                            overlayView?.setTextColor(0xFFFFA500.toInt())
+                        } else {
+                            overlayView?.setTextColor(0xFF00FF00.toInt())
+                        }
                     }
                 }
             }
         }, backgroundHandler)
 
-        // Bikin Virtual Display (Nembak layar ke ImageReader)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "ChessCapture",
             width, height, density,
@@ -135,7 +143,7 @@ class ScreenCaptureService : Service() {
         overlayView = TextView(this).apply {
             text = "Memulai Capture..."
             setBackgroundColor(0xAA000000.toInt())
-            setTextColor(0xFF00FF00.toInt()) // Warna hijau matrix
+            setTextColor(0xFFFFFFFF.toInt())
             setPadding(30, 30, 30, 30)
             textSize = 14f
         }
