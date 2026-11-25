@@ -11,18 +11,6 @@ class ChessLogic {
         }
     }
 
-    fun printBoard(): String {
-        val sb = StringBuilder()
-        for (r in 0..7) {
-            for (c in 0..7) {
-                sb.append(board[r][c]).append(" ")
-            }
-            sb.append("\n")
-        }
-        return sb.toString()
-    }
-
-    // Ngubah papan jadi FEN string buat Stockfish
     fun toFEN(turn: String = "w"): String {
         val sb = StringBuilder()
         for (r in 0..7) {
@@ -36,8 +24,7 @@ class ChessLogic {
                         sb.append(emptyCount)
                         emptyCount = 0
                     }
-                    // Karena kita belum deteksi jenis bidak (hanya warna), kita tebak aja jadi pion 'p' atau 'P'
-                    // (Nanti kita upgrade biar bisa deteksi Kuda, Benteng, dll)
+                    // Sementara kita anggap semua bidak adalah Pion (P/p)
                     if (piece == 'w') sb.append('P') 
                     else if (piece == 'b') sb.append('p')
                 }
@@ -45,7 +32,6 @@ class ChessLogic {
             if (emptyCount > 0) sb.append(emptyCount)
             if (r < 7) sb.append("/")
         }
-        // Tambahin info standar FEN
         return "$sb $turn KQkq - 0 1"
     }
 }
