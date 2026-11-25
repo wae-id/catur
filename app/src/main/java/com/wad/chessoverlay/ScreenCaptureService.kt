@@ -29,6 +29,7 @@ class ScreenCaptureService : Service() {
     private lateinit var windowManager: WindowManager
     private var overlayView: OverlayCanvasView? = null
     private lateinit var boardReader: BoardReader
+    private lateinit var engine: StockfishEngine
 
     private var handlerThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
@@ -36,6 +37,7 @@ class ScreenCaptureService : Service() {
     private var frameCount = 0
     private var lastFpsTime = 0L
     private var lastProcessTime = 0L
+    private var lastEngineTime = 0L
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -51,6 +53,8 @@ class ScreenCaptureService : Service() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         boardReader = BoardReader(this)
+        engine = StockfishEngine(this)
+        engine.start()
         createNotificationChannel()
     }
 
@@ -91,19 +95,17 @@ class ScreenCaptureService : Service() {
                 frameCount++
                 val currentTime = System.currentTimeMillis()
                 
-                // Update FPS aja
                 if (currentTime - lastFpsTime >= 1000) {
                     val fps = frameCount
                     frameCount = 0
                     lastFpsTime = currentTime
                     
                     Handler(mainLooper).post {
-                        overlayView?.fpsText = "FPS: $fps | Kalibrasi OK"
+                        overlayView?.fpsText = "FPS: $fps | Engine Ready"
                         overlayView?.invalidate()
                     }
                 }
 
-                // Proses baca papan
                 if (currentTime - lastProcessTime >= 500) {
                     lastProcessTime = currentTime
                     processBoardImage(image, width, height)
@@ -114,8 +116,7 @@ class ScreenCaptureService : Service() {
         }, backgroundHandler)
 
         virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ChessCapture",
-            width, height, density,
+            "ChessCapture", width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface, null, backgroundHandler
         )
@@ -137,22 +138,30 @@ class ScreenCaptureService : Service() {
             val boardString = boardReader.scanFullBoard(bitmap)
             val currentPoints = boardReader.loadCalibration()
             
-            Handler(mainLooper).post {
-                overlayView?.boardText = "Papan:\n$boardString"
-                overlayView?.points = currentPoints // Update titik buat gambar lingkaran merah
-                overlayView?.invalidate()
+            // Logika Panggil Stockfish (Tiap 2 Detik)
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastEngineTime >= 2000) {
+                lastEngineTime = currentTime
+                val fen = boardReader.getFen()
+                
+                // Panggil Engine di background thread
+                Thread {
+                    val bestMove = engine.getBestMove(fen)
+                    Handler(mainLooper).post {
+                        overlayView?.boardText = "FEN: $fen\nBest Move: $bestMove\n\nPapan:\n$boardString"
+                        overlayView?.points = currentPoints
+                        overlayView?.invalidate()
+                    }
+                }.start()
             }
             
             bitmap.recycle()
-        } catch (e: Exception) {
-            // diamkan aja kalau error
-        }
+        } catch (e: Exception) {}
     }
 
     private fun showOverlay() {
         if (overlayView != null) return
 
-        // Pakai MATCH_PARENT biar bisa gambar titik di seluruh layar
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -162,7 +171,7 @@ class ScreenCaptureService : Service() {
                 WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or 
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or 
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, // Biar nutupin status bar juga
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
 
@@ -185,7 +194,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Memindai papan catur...")
+            .setContentText("Stockfish sedang berjalan...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -199,6 +208,7 @@ class ScreenCaptureService : Service() {
         virtualDisplay?.release()
         imageReader?.close()
         mediaProjection?.stop()
+        engine.stop()
         
         backgroundHandler?.removeCallbacksAndMessages(null)
         handlerThread?.quitSafely()
