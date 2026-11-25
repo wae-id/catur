@@ -11,11 +11,12 @@ class StockfishEngine(private val context: Context) {
     private var writer: OutputStreamWriter? = null
     private var reader: BufferedReader? = null
     private var isReady = false
+    var errorMsg = ""
 
     fun start() {
         try {
             val destFile = File(context.filesDir, "stockfish")
-            if (!destFile.exists()) {
+            if (!destFile.exists() || destFile.length() < 1000L) {
                 val inputStream = context.assets.open("stockfish")
                 val outputStream = destFile.outputStream()
                 inputStream.copyTo(outputStream)
@@ -29,9 +30,14 @@ class StockfishEngine(private val context: Context) {
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
             sendCommand("uci")
-            waitFor("uciok")
-            isReady = true
+            val output = waitFor("uciok")
+            if (output.contains("uciok")) {
+                isReady = true
+            } else {
+                errorMsg = "Gagal UCI"
+            }
         } catch (e: Exception) {
+            errorMsg = e.message ?: "Error Start"
             isReady = false
         }
     }
@@ -56,7 +62,7 @@ class StockfishEngine(private val context: Context) {
     }
 
     fun getBestMove(fen: String): String {
-        if (!isReady) return "Engine belum siap"
+        if (!isReady) return "Engine Gagal: $errorMsg"
         
         sendCommand("position fen $fen")
         sendCommand("go depth 12")
@@ -73,7 +79,7 @@ class StockfishEngine(private val context: Context) {
         } catch (e: Exception) {
             return "Error baca langkah"
         }
-        return bestMove
+        return if (bestMove.isNotEmpty()) bestMove else "Tidak ada langkah"
     }
 
     fun stop() {
