@@ -20,23 +20,32 @@ jobs:
     - name: Accept Android Licenses
       run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-    - name: Download Stockfish and NNUE
+    - name: Download NNUE
       run: |
-        mkdir -p app/src/main/jniLibs/arm64-v8a
         mkdir -p app/src/main/assets
-        
-        # PAKAI LINK YANG BENER (arm64v8)
-        curl -L -o app/src/main/jniLibs/arm64-v8a/libstockfish.so https://github.com/official-stockfish/Stockfish/releases/download/sf_16.1/stockfish-android-arm64v8
-        
-        FILESIZE=$(stat -c%s app/src/main/jniLibs/arm64-v8a/libstockfish.so)
-        echo "Ukuran Stockfish: $FILESIZE bytes"
-        if [ "$FILESIZE" -lt 1000000 ]; then
-          echo "ERROR: Gagal download Stockfish!"
-          exit 1
-        fi
-
-        # Download NNUE
         curl -L -o app/src/main/assets/nn-5af11540bbfe.nnue https://tests.stockfishchess.org/api/nn/nn-5af11540bbfe.nnue
+
+    - name: Compile Stockfish for Android
+      run: |
+        sudo apt-get install -y make
+        # Cari NDK yang terinstal di server GitHub
+        NDK_VERSION=$(ls $ANDROID_HOME/ndk | head -n 1)
+        export ANDROID_NDK=$ANDROID_HOME/ndk/$NDK_VERSION
+        echo "Menggunakan NDK: $ANDROID_NDK"
+        
+        # Clone kode sumber Stockfish
+        git clone https://github.com/official-stockfish/Stockfish.git
+        cd Stockfish/src
+        
+        # Compile jadiin binary Android ARM64
+        make -j build ARCH=arm64 COMP=ndk
+        
+        # Pindahin ke folder jniLibs project kita
+        mkdir -p ../../app/src/main/jniLibs/arm64-v8a
+        cp stockfish ../../app/src/main/jniLibs/arm64-v8a/libstockfish.so
+        
+        # Cek ukuran file biar mastiin sukses
+        echo "Ukuran Stockfish: $(stat -c%s ../../app/src/main/jniLibs/arm64-v8a/libstockfish.so) bytes"
 
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
