@@ -10,6 +10,7 @@ class BoardReader(private val context: Context) {
     
     private val chessLogic = ChessLogic()
 
+    // Ngeload 4 titik kalibrasi dari memori HP
     fun loadCalibration(): List<PointF>? {
         val prefs = context.getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
         val jsonString = prefs.getString("calibration_points", null) ?: return null
@@ -27,11 +28,14 @@ class BoardReader(private val context: Context) {
         }
     }
 
+    // Ngecek apakah udah pernah kalibrasi
     fun isBoardReady(): Boolean = loadCalibration() != null
 
+    // Nge-scan 64 kotak dari gambar layar
     fun scanFullBoard(screenBitmap: Bitmap): String {
         val points = loadCalibration() ?: return "Kalibrasi Belum Ada!"
         
+        // Papan virtual 8x8
         val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
         val matrix = Homography.getPerspectiveTransform(src, points)
         
@@ -39,11 +43,11 @@ class BoardReader(private val context: Context) {
 
         for (row in 0..7) {
             for (col in 0..7) {
-                // Titik tengah tiap kotak
+                // Titik tengah tiap kotak (0.5, 1.5, dst)
                 val center = Homography.transformPoint(matrix, PointF(col + 0.5f, row + 0.5f))
                 
                 try {
-                    // Ambil warna rata-rata dari area kecil (3x3 pixel) biar anti-noise
+                    // Ambil warna rata-rata dari area 5x5 pixel biar anti-noise
                     var totalR = 0
                     var totalG = 0
                     var totalB = 0
@@ -53,6 +57,7 @@ class BoardReader(private val context: Context) {
                         for (dy in -2..2) {
                             val px = center.x.toInt() + dx
                             val py = center.y.toInt() + dy
+                            // Pastiin pixel engga keluar batas layar
                             if (px in 0 until screenBitmap.width && py in 0 until screenBitmap.height) {
                                 val c = screenBitmap.getPixel(px, py)
                                 totalR += Color.red(c)
@@ -63,17 +68,18 @@ class BoardReader(private val context: Context) {
                         }
                     }
                     
+                    // Hitung rata-rata RGB
                     val r = totalR / count
                     val g = totalG / count
                     val b = totalB / count
                     
-                    // Deteksi Bidak (Heuristik Baru)
+                    // Heuristik deteksi warna (Putih, Hitam, Kosong)
                     if (r > 180 && g > 180 && b > 180) {
-                        newBoard[row][col] = 'w' // Putih
+                        newBoard[row][col] = 'w' // Pion/bidak Putih (terang)
                     } else if (r < 95 && g < 95 && b < 95) {
-                        newBoard[row][col] = 'b' // Hitam (Abu-abu gelap)
+                        newBoard[row][col] = 'b' // Pion/bidak Hitam (gelap)
                     } else {
-                        newBoard[row][col] = '.' // Kosong (Coklat papan)
+                        newBoard[row][col] = '.' // Kosong (warna papan coklat)
                     }
                     
                 } catch (e: Exception) {
@@ -82,7 +88,13 @@ class BoardReader(private val context: Context) {
             }
         }
         
+        // Simpan hasil scan ke ChessLogic
         chessLogic.updateBoard(newBoard)
         return chessLogic.printBoard()
+    }
+
+    // Fungsi buat minta format FEN ke ChessLogic (dipake sama Stockfish)
+    fun getFen(): String {
+        return chessLogic.toFEN("w") // Anggap giliran putih dulu buat testing
     }
 }
