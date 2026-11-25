@@ -22,6 +22,9 @@ class CalibrationActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Bikin window-nya transparan
+        window.setBackgroundDrawableResource(android.R.color.transparent)
+        
         val layout = FrameLayout(this)
         touchView = CalibrationView(this) { count ->
             statusText.text = if (count < 4) "Tap pojok papan: $count/4" else "Semua titik siap! Klik Simpan."
@@ -29,7 +32,7 @@ class CalibrationActivity : AppCompatActivity() {
         
         statusText = TextView(this).apply {
             text = "Tap 4 pojok papan (Kiri-Atas, Kanan-Atas, Kanan-Bawah, Kiri-Bawah)"
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(Color.parseColor("#CC000000")) // Hitam agak transparan
             setTextColor(Color.WHITE)
             setPadding(30, 30, 30, 30)
         }
@@ -70,17 +73,18 @@ class CalibrationActivity : AppCompatActivity() {
     }
 }
 
-// Custom View buat nangkep tap dan gambar titik
 class CalibrationView(context: Context, private val onPointsChanged: (Int) -> Unit) : View(context) {
     private val points = mutableListOf<PointF>()
-    private val paint = Paint().apply { color = Color.RED; isAntiAlias = true }
-    private val textPaint = Paint().apply { color = Color.WHITE; textSize = 40f }
+    private val paint = Paint().apply { color = Color.RED; isAntiAlias = true; style = Paint.Style.FILL }
+    private val strokePaint = Paint().apply { color = Color.GREEN; isAntiAlias = true; style = Paint.Style.STROKE; strokeWidth = 5f }
+    private val textPaint = Paint().apply { color = Color.WHITE; textSize = 50f; textAlign = Paint.Align.CENTER }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         for (i in points.indices) {
-            canvas.drawCircle(points[i].x, points[i].y, 30f, paint)
-            canvas.drawText("${i + 1}", points[i].x - 10, points[i].y + 15, textPaint)
+            canvas.drawCircle(points[i].x, points[i].y, 40f, paint)
+            canvas.drawCircle(points[i].x, points[i].y, 40f, strokePaint)
+            canvas.drawText("${i + 1}", points[i].x, points[i].y + 15, textPaint)
         }
     }
 
