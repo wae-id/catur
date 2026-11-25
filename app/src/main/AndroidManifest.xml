@@ -8,11 +8,12 @@
 
     <application
         android:allowBackup="true"
-        android:extractNativeLibs="true" 
+        android:extractNativeLibs="true"
+        android:icon="@drawable/ic_notification"
         android:label="Chess Overlay"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
-        
+        android:theme="@style/AppTheme">
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -24,13 +25,12 @@
 
         <activity
             android:name=".CalibrationActivity"
-            android:exported="false"
-            android:theme="@style/TransparentTheme" />
+            android:exported="false" />
 
         <service
             android:name=".ScreenCaptureService"
-            android:foregroundServiceType="mediaProjection"
-            android:exported="false" />
-        
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
     </application>
 </manifest>
