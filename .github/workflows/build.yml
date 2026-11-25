@@ -20,6 +20,11 @@ jobs:
     - name: Accept Android Licenses
       run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
+    - name: Install Android NDK
+      run: |
+        # Robot download NDK dulu
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.2.9519653"
+
     - name: Download NNUE
       run: |
         mkdir -p app/src/main/assets
@@ -27,24 +32,21 @@ jobs:
 
     - name: Compile Stockfish for Android
       run: |
-        sudo apt-get install -y make
-        # Cari NDK yang terinstal di server GitHub
-        NDK_VERSION=$(ls $ANDROID_HOME/ndk | head -n 1)
-        export ANDROID_NDK=$ANDROID_HOME/ndk/$NDK_VERSION
-        echo "Menggunakan NDK: $ANDROID_NDK"
+        # Kasih tau robot di mana NDK-nya
+        export NDK=$ANDROID_HOME/ndk/25.2.9519653
         
         # Clone kode sumber Stockfish
         git clone https://github.com/official-stockfish/Stockfish.git
         cd Stockfish/src
         
-        # Compile jadiin binary Android ARM64
+        # Compile pakai NDK (COMP=ndk)
         make -j build ARCH=arm64 COMP=ndk
         
-        # Pindahin ke folder jniLibs project kita
+        # Pindahin hasilnya ke project kita
         mkdir -p ../../app/src/main/jniLibs/arm64-v8a
         cp stockfish ../../app/src/main/jniLibs/arm64-v8a/libstockfish.so
         
-        # Cek ukuran file biar mastiin sukses
+        # Cek ukuran biar mastiin sukses
         echo "Ukuran Stockfish: $(stat -c%s ../../app/src/main/jniLibs/arm64-v8a/libstockfish.so) bytes"
 
     - name: Setup Gradle
