@@ -15,16 +15,30 @@ class StockfishEngine(private val context: Context) {
 
     fun start() {
         try {
-            // Ambil path dari folder nativeLibraryDir
+            // 1. Copy NNUE file dari assets ke internal storage
+            val nnueFile = File(context.filesDir, "nn-5af11540bbfe.nnue")
+            if (!nnueFile.exists()) {
+                try {
+                    val nnueStream = context.assets.open("nn-5af11540bbfe.nnue")
+                    val outStream = nnueFile.outputStream()
+                    nnueStream.copyTo(outStream)
+                    nnueStream.close()
+                    outStream.close()
+                } catch (e: Exception) {
+                    errorMsg = "Gagal copy NNUE"
+                    return
+                }
+            }
+
+            // 2. Jalanin binary stockfish
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val stockfishFile = File(nativeLibDir, "libstockfish.so")
 
             if (!stockfishFile.exists()) {
-                errorMsg = "File libstockfish.so gak ada di nativeLib"
+                errorMsg = "File libstockfish.so gak ada"
                 return
             }
 
-            // Eksekusi langsung tanpa di-copy ke filesDir
             process = ProcessBuilder(stockfishFile.absolutePath)
                 .redirectErrorStream(true)
                 .start()
@@ -32,12 +46,17 @@ class StockfishEngine(private val context: Context) {
             writer = OutputStreamWriter(process!!.outputStream)
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
+            // 3. Kasih tau Stockfish lokasi NNUE-nya
+            sendCommand("setoption name EvalFile value ${nnueFile.absolutePath}")
             sendCommand("uci")
+            
             val output = waitFor("uciok")
             if (output.contains("uciok")) {
                 isReady = true
+                errorMsg = "" // Bersihin error
             } else {
-                errorMsg = "Gagal UCI init"
+                // Kalo gagal, simpen output aslinya biar kita tau kenapa
+                errorMsg = "Output: ${output.take(50)}" 
             }
         } catch (e: Exception) {
             errorMsg = e.message ?: "Error Start"
