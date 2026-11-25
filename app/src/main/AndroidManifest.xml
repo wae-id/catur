@@ -12,7 +12,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
         
-        <!-- Activity Utama -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -22,12 +21,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Activity Kalibrasi (Harus di luar MainActivity) -->
+        <!-- KUNCI TRANSPARAN: Pakai tema Translucent -->
         <activity
             android:name=".CalibrationActivity"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <!-- Service Capture -->
         <service
             android:name=".ScreenCaptureService"
             android:foregroundServiceType="mediaProjection"
