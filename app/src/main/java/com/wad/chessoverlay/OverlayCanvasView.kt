@@ -12,7 +12,6 @@ class OverlayCanvasView(context: Context) : View(context) {
     private val dotPaint = Paint().apply { color = Color.RED; style = Paint.Style.FILL; isAntiAlias = true }
     private val bgPaint = Paint().apply { color = Color.parseColor("#AA000000") }
     
-    // Panah warna Magenta
     private val arrowPaint = Paint().apply { 
         color = Color.MAGENTA; strokeWidth = 15f; style = Paint.Style.STROKE; isAntiAlias = true 
     }
@@ -23,14 +22,12 @@ class OverlayCanvasView(context: Context) : View(context) {
     var fpsText = ""
     var bestMove = ""
     var points: List<PointF>? = null
+    var isFlipped = false // <-- Variabel buat nentuin papan kebalik atau engga
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         
-        // Background kotak item buat teks
         canvas.drawRect(20f, 20f, 450f, 150f, bgPaint)
-
-        // Teks FPS
         canvas.drawText(fpsText, 30f, 60f, textPaint)
         canvas.drawText("Best Move: $bestMove", 30f, 110f, textPaint)
 
@@ -38,7 +35,6 @@ class OverlayCanvasView(context: Context) : View(context) {
             val src = listOf(PointF(0f,0f), PointF(8f,0f), PointF(8f,8f), PointF(0f,8f))
             val matrix = Homography.getPerspectiveTransform(src, points!!)
             
-            // Gambar 64 titik merah
             for (r in 0..7) {
                 for (c in 0..7) {
                     val center = Homography.transformPoint(matrix, PointF(c + 0.5f, r + 0.5f))
@@ -46,19 +42,24 @@ class OverlayCanvasView(context: Context) : View(context) {
                 }
             }
 
-            // GAMBAR PANAH
             if (bestMove.length >= 4) {
-                val fromCol = bestMove[0] - 'a'
-                val fromRow = 8 - Character.getNumericValue(bestMove[1])
-                val toCol = bestMove[2] - 'a'
-                val toRow = 8 - Character.getNumericValue(bestMove[3])
+                var fromCol = bestMove[0] - 'a'
+                var fromRow = 8 - Character.getNumericValue(bestMove[1])
+                var toCol = bestMove[2] - 'a'
+                var toRow = 8 - Character.getNumericValue(bestMove[3])
+
+                // Kalau papan kebalik (main hitam), balikin koordinat panahnya
+                if (isFlipped) {
+                    fromCol = 7 - fromCol
+                    fromRow = 7 - fromRow
+                    toCol = 7 - toCol
+                    toRow = 7 - toRow
+                }
 
                 val p1 = Homography.transformPoint(matrix, PointF(fromCol + 0.5f, fromRow + 0.5f))
                 val p2 = Homography.transformPoint(matrix, PointF(toCol + 0.5f, toRow + 0.5f))
 
-                // Gambar garis panah
                 canvas.drawLine(p1.x, p1.y, p2.x, p2.y, arrowPaint)
-                // Gambar ujung panah
                 canvas.drawCircle(p2.x, p2.y, 25f, headPaint)
             }
         }
