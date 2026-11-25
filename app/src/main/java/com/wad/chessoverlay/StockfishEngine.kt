@@ -15,16 +15,25 @@ class StockfishEngine(private val context: Context) {
 
     fun start() {
         try {
-            // Ambil path dari folder nativeLibraryDir (tempat Android naro file dari jniLibs)
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
-            val stockfishFile = File(nativeLibDir, "libstockfish.so")
+            val srcFile = File(nativeLibDir, "libstockfish.so")
             
-            if (!stockfishFile.exists()) {
-                errorMsg = "File libstockfish.so gak ada"
-                return
+            // Kita copy ke folder internal aplikasi biar bisa dieksekusi
+            val destFile = File(context.filesDir, "stockfish_engine")
+            
+            if (!destFile.exists() || destFile.length() < 10000L) {
+                if (srcFile.exists()) {
+                    srcFile.copyTo(destFile, overwrite = true)
+                } else {
+                    errorMsg = "File libstockfish.so tidak ditemukan"
+                    return
+                }
             }
+            
+            // Set izin eksekusi
+            destFile.setExecutable(true)
 
-            process = ProcessBuilder(stockfishFile.absolutePath).redirectErrorStream(true).start()
+            process = ProcessBuilder(destFile.absolutePath).redirectErrorStream(true).start()
             writer = OutputStreamWriter(process!!.outputStream)
             reader = BufferedReader(InputStreamReader(process!!.inputStream))
 
