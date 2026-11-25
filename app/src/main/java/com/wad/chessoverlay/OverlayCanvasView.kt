@@ -12,13 +12,15 @@ class OverlayCanvasView(context: Context) : View(context) {
     private val dotPaint = Paint().apply { color = Color.RED; style = Paint.Style.FILL; isAntiAlias = true }
     private val bgPaint = Paint().apply { color = Color.parseColor("#AA000000") }
     
-    // Paint buat panah rekomendasi
+    // Panah warna Magenta
     private val arrowPaint = Paint().apply { 
-        color = Color.CYAN; strokeWidth = 12f; style = Paint.Style.STROKE; isAntiAlias = true 
+        color = Color.MAGENTA; strokeWidth = 15f; style = Paint.Style.STROKE; isAntiAlias = true 
+    }
+    private val headPaint = Paint().apply { 
+        color = Color.MAGENTA; style = Paint.Style.FILL; isAntiAlias = true 
     }
 
     var fpsText = ""
-    var boardText = ""
     var bestMove = ""
     var points: List<PointF>? = null
 
@@ -26,16 +28,11 @@ class OverlayCanvasView(context: Context) : View(context) {
         super.onDraw(canvas)
         
         // Background kotak item buat teks
-        canvas.drawRect(20f, 20f, 450f, 450f, bgPaint)
+        canvas.drawRect(20f, 20f, 450f, 150f, bgPaint)
 
-        // Teks FPS & Papan
-        var y = 60f
-        canvas.drawText(fpsText, 30f, y, textPaint)
-        y += 40f
-        boardText.lines().forEach { line ->
-            canvas.drawText(line, 30f, y, textPaint)
-            y += 35f
-        }
+        // Teks FPS
+        canvas.drawText(fpsText, 30f, 60f, textPaint)
+        canvas.drawText("Best Move: $bestMove", 30f, 110f, textPaint)
 
         if (points != null && points!!.size == 4) {
             val src = listOf(PointF(0f,0f), PointF(8f,0f), PointF(8f,8f), PointF(0f,8f))
@@ -49,9 +46,8 @@ class OverlayCanvasView(context: Context) : View(context) {
                 }
             }
 
-            // GAMBAR PANAH DARI STOCKFISH
+            // GAMBAR PANAH
             if (bestMove.length >= 4) {
-                // Ubah e2e4 jadi koordinat papan
                 val fromCol = bestMove[0] - 'a'
                 val fromRow = 8 - Character.getNumericValue(bestMove[1])
                 val toCol = bestMove[2] - 'a'
@@ -62,8 +58,8 @@ class OverlayCanvasView(context: Context) : View(context) {
 
                 // Gambar garis panah
                 canvas.drawLine(p1.x, p1.y, p2.x, p2.y, arrowPaint)
-                // Gambar ujung panah (lingkaran)
-                canvas.drawCircle(p2.x, p2.y, 20f, Paint().apply { color = Color.CYAN; isAntiAlias = true })
+                // Gambar ujung panah
+                canvas.drawCircle(p2.x, p2.y, 25f, headPaint)
             }
         }
     }
