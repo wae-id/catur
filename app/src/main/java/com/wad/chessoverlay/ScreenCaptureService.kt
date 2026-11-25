@@ -38,6 +38,10 @@ class ScreenCaptureService : Service() {
     private var lastFpsTime = 0L
     private var lastProcessTime = 0L
     private var lastEngineTime = 0L
+    private var simulationIndex = 0
+
+    // Daftar langkah simulasi buat ngetes panah
+    private val simMoves = listOf("e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "e4e5", "d7d5")
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -64,7 +68,7 @@ class ScreenCaptureService : Service() {
 
             val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
             val dataIntent = intent.getParcelableExtra<Intent>(EXTRA_DATA_INTENT)
-            boardReader.isUserPlayingBlack = intent.getBooleanExtra("IS_BLACK", false) // <-- Baca warna
+            boardReader.isUserPlayingBlack = intent.getBooleanExtra("IS_BLACK", false)
             
             if (dataIntent != null) {
                 val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -128,33 +132,23 @@ class ScreenCaptureService : Service() {
         if (!boardReader.isBoardReady()) return
         
         try {
-            val planes = image.planes
-            val buffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * width
-            
-            val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(buffer)
-
             val currentPoints = boardReader.loadCalibration()
             
             val currentTime = System.currentTimeMillis()
-            if (currentTime - lastEngineTime >= 2500) { // Tiap 2.5 detik
+            if (currentTime - lastEngineTime >= 2000) { // Tiap 2 detik
                 lastEngineTime = currentTime
-                val fen = boardReader.scanFullBoard(bitmap) 
                 
-                Thread {
-                    val bestMove = engine.getBestMove(fen)
-                    Handler(mainLooper).post {
-                        overlayView?.bestMove = bestMove 
-                        overlayView?.points = currentPoints
-                        overlayView?.invalidate()
-                    }
-                }.start()
+                // KITA PAKAI SIMULASI DULU BIAR KAMU LIAT PANAHNYA GERAK
+                val bestMove = simMoves[simulationIndex % simMoves.size]
+                simulationIndex++
+                
+                Handler(mainLooper).post {
+                    overlayView?.bestMove = bestMove 
+                    overlayView?.points = currentPoints
+                    overlayView?.isFlipped = boardReader.isUserPlayingBlack
+                    overlayView?.invalidate()
+                }
             }
-            
-            bitmap.recycle()
         } catch (e: Exception) {}
     }
 
@@ -193,7 +187,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Stockfish sedang berjalan...")
+            .setContentText("Simulasi Panah...")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
