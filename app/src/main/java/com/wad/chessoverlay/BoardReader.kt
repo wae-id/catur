@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PointF
 import org.json.JSONArray
-import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -16,14 +15,15 @@ class BoardReader(private val context: Context) {
     var isUserPlayingBlack = false
     var detectedPoints: List<PointF>? = null
     var statusNote = ""
+    private var invalidBoardStreak = 0
 
     init {
-        detectedPoints = loadSavedPoints("calibration_points") ?: loadSavedPoints("auto_locked_points")
+        detectedPoints = loadManualCalibration()
     }
 
-    private fun loadSavedPoints(key: String): List<PointF>? {
+    private fun loadManualCalibration(): List<PointF>? {
         val prefs = context.getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
-        val jsonString = prefs.getString(key, null) ?: return null
+        val jsonString = prefs.getString("calibration_points", null) ?: return null
 
         return try {
             val jsonArray = JSONArray(jsonString)
@@ -38,33 +38,18 @@ class BoardReader(private val context: Context) {
         }
     }
 
-    private fun saveAutoLockedPoints(points: List<PointF>) {
-        val prefs = context.getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
-        val jsonArray = JSONArray()
-        for (p in points) {
-            val obj = JSONObject()
-            obj.put("x", p.x.toDouble())
-            obj.put("y", p.y.toDouble())
-            jsonArray.put(obj)
-        }
-        prefs.edit().putString("auto_locked_points", jsonArray.toString()).apply()
-    }
-
     fun isBoardReady(): Boolean = true
 
     fun resetGame() {
         chessLogic.reset()
-        detectedPoints = loadSavedPoints("calibration_points") ?: loadSavedPoints("auto_locked_points")
+        detectedPoints = loadManualCalibration()
+        invalidBoardStreak = 0
         statusNote = ""
     }
 
     fun scanFullBoard(screenBitmap: Bitmap): String {
         if (detectedPoints == null) {
-            val found = autoDetectBoard(screenBitmap)
-            if (found != null) {
-                detectedPoints = found
-                saveAutoLockedPoints(found)
-            }
+            detectedPoints = autoDetectBoard(screenBitmap)
         }
 
         val points = detectedPoints ?: run {
@@ -80,6 +65,20 @@ class BoardReader(private val context: Context) {
             statusNote = "Papan tertutup..."
             return ""
         }
+
+        // Validasi bahwa batas atas & bawah papan masih sesuai; jika bergeser, cari ulang otomatis
+        if (boardSize > 100f && loadManualCalibration() == null &&
+            !verifyBoardBounds(screenBitmap, l, t, boardSize)
+        ) {
+            invalidBoardStreak++
+            if (invalidBoardStreak >= 4) {
+                detectedPoints = autoDetectBoard(screenBitmap)
+                invalidBoardStreak = 0
+            }
+            statusNote = "Menyelaraskan papan..."
+            return ""
+        }
+        invalidBoardStreak = 0
 
         val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
         val matrix = Homography.getPerspectiveTransform(src, points)
@@ -131,8 +130,49 @@ class BoardReader(private val context: Context) {
             return ""
         }
 
+        val fen = chessLogic.toFEN(myTurn)
+        if (fen.isEmpty()) {
+            statusNote = "Sinkronisasi posisi..."
+            return ""
+        }
+
         statusNote = ""
-        return chessLogic.toFEN(myTurn)
+        return fen
+    }
+
+    /**
+     * Memastikan tepi dalam atas dan bawah papan benar-benar berada di dalam area petak catur
+     * dan tidak meleset ke latar belakang UI gelap.
+     */
+    private fun verifyBoardBounds(bitmap: Bitmap, left: Float, top: Float, size: Float): Boolean {
+        val cell = size / 8f
+        val topY = (top + 4f).roundToInt()
+        val botY = (top + size - 4f).roundToInt()
+        if (topY < 0 || botY >= bitmap.height) return false
+
+        var warmHits = 0
+        for (col in 0..7) {
+            val x = (left + (col + 0.14f) * cell).roundToInt().coerceIn(0, bitmap.width - 1)
+            if (isWarmBoardPixel(bitmap.getPixel(x, topY))) warmHits++
+            if (isWarmBoardPixel(bitmap.getPixel(x, botY))) warmHits++
+        }
+        return warmHits >= 11
+    }
+
+    private fun isWarmBoardPixel(c: Int): Boolean {
+        val r = Color.red(c)
+        val g = Color.green(c)
+        val b = Color.blue(c)
+        val lum = 0.299 * r + 0.587 * g + 0.114 * b
+        return lum > 95.0 && r >= b - 8
+    }
+
+    private fun isDarkUiPixel(c: Int): Boolean {
+        val r = Color.red(c)
+        val g = Color.green(c)
+        val b = Color.blue(c)
+        val lum = 0.299 * r + 0.587 * g + 0.114 * b
+        return lum < 85.0
     }
 
     private fun isPopupCoveringBoard(bitmap: Bitmap, left: Float, top: Float, size: Float): Boolean {
@@ -363,119 +403,123 @@ class BoardReader(private val context: Context) {
         }
     }
 
+    /**
+     * Deteksi papan otomatis berbasis proyeksi tepi luar + 49 perpotongan kisi kotak catur.
+     * Menemukan posisi tepat tanpa perlu kalibrasi manual.
+     */
     private fun autoDetectBoard(bitmap: Bitmap): List<PointF>? {
         val w = bitmap.width
         val h = bitmap.height
         if (w < 300 || h < 400) return null
 
-        val minSize = (w * 0.85f).toInt()
-        val maxSize = w
-        val maxLeft = (w * 0.08f).toInt()
-        val minTop = (h * 0.12f).toInt()
-        val maxTop = (h * 0.55f).toInt()
+        val minTop = (h * 0.10f).toInt().coerceAtLeast(4)
+        val maxTop = (h * 0.58f).toInt()
+        val maxMargin = (w * 0.14f).toInt()
 
-        var bestScore = 0.0
+        // 1. Saring baris Y yang menjadi batas atas papan (gelap di atas, hangat di bawah)
+        val candidateTops = mutableListOf<Int>()
+        for (y in minTop..maxTop) {
+            var edgeHits = 0
+            for (i in 0..7) {
+                val x = ((w * (0.12f + i * 0.105f))).roundToInt().coerceIn(0, w - 1)
+                if (isDarkUiPixel(bitmap.getPixel(x, y - 3)) &&
+                    isWarmBoardPixel(bitmap.getPixel(x, y + 3))
+                ) {
+                    edgeHits++
+                }
+            }
+            if (edgeHits >= 5) {
+                candidateTops.add(y)
+            }
+        }
+
+        if (candidateTops.isEmpty()) return null
+
+        var bestScore = -1.0
         var bestLeft = 0
         var bestTop = 0
-        var bestSize = 0
+        var bestSize = w
 
-        for (size in minSize..maxSize step 6) {
-            val leftLimit = minOf(maxLeft, w - size)
-            for (left in 0..leftLimit step 4) {
-                val topLimit = minOf(maxTop, h - size)
-                for (top in minTop..topLimit step 6) {
-                    val score = scoreBoardCandidate(bitmap, left.toFloat(), top.toFloat(), size.toFloat(), coarse = true)
-                    if (score > bestScore) {
-                        bestScore = score
-                        bestLeft = left
-                        bestTop = top
-                        bestSize = size
-                    }
+        // 2. Evaluasi setiap kandidat (margin kiri/kanan simetris + top)
+        for (top in candidateTops) {
+            for (margin in 0..maxMargin step 2) {
+                val size = w - 2 * margin
+                if (size < (w * 0.72f).toInt() || top + size + 3 >= h) continue
+
+                val score = scoreExactBoard(bitmap, margin.toFloat(), top.toFloat(), size.toFloat())
+                if (score > bestScore) {
+                    bestScore = score
+                    bestLeft = margin
+                    bestTop = top
+                    bestSize = size
                 }
             }
         }
 
-        if (bestScore < 12.0 || bestSize == 0) return null
+        if (bestScore < 35.0) return null
 
-        var fineBestScore = -1.0
+        // 3. Penyempurnaan 1-piksel independen untuk left, top, dan size
+        var fineScore = bestScore
         var fineLeft = bestLeft
         var fineTop = bestTop
         var fineSize = bestSize
 
-        for (size in (bestSize - 8)..(bestSize + 8) step 1) {
-            if (size < minSize || size > w) continue
-            for (left in (bestLeft - 6)..(bestLeft + 6) step 1) {
-                if (left < 0 || left + size > w) continue
-                for (top in (bestTop - 6)..(bestTop + 6) step 1) {
-                    if (top < 0 || top + size > h) continue
-                    val score = scoreBoardCandidate(bitmap, left.toFloat(), top.toFloat(), size.toFloat(), coarse = false)
-                    if (score > fineBestScore) {
-                        fineBestScore = score
-                        fineLeft = left
-                        fineTop = top
-                        fineSize = size
+        for (dTop in -4..4) {
+            val t = bestTop + dTop
+            if (t < 4) continue
+            for (dLeft in -4..4) {
+                val l = bestLeft + dLeft
+                if (l < 0) continue
+                for (dSize in -4..4) {
+                    val s = bestSize + dSize
+                    if (l + s > w || t + s + 4 >= h) continue
+                    val sc = scoreExactBoard(bitmap, l.toFloat(), t.toFloat(), s.toFloat())
+                    if (sc > fineScore) {
+                        fineScore = sc
+                        fineLeft = l
+                        fineTop = t
+                        fineSize = s
                     }
                 }
             }
         }
 
-        if (fineBestScore < 18.0) return null
+        val l = fineLeft.toFloat()
+        val t = fineTop.toFloat()
+        val r = (fineLeft + fineSize).toFloat()
+        val b = (fineTop + fineSize).toFloat()
 
-        return snapBoardEdges(bitmap, fineLeft, fineTop, fineSize)
+        return listOf(PointF(l, t), PointF(r, t), PointF(r, b), PointF(l, b))
     }
 
-    /**
-     * Mengunci garis tepi atas & bawah papan tepat pada perbatasan latar gelap UI
-     * dengan kotak papan catur agar ke-64 titik berada tepat di tengah petak.
-     */
-    private fun snapBoardEdges(bitmap: Bitmap, left: Int, top: Int, size: Int): List<PointF> {
-        val sampleX = (left + size * 0.06f).roundToInt().coerceIn(0, bitmap.width - 1)
-        var snappedTop = top
-        for (y in (top - 25).coerceAtLeast(1)..(top + 25).coerceAtMost(bitmap.height - 2)) {
-            val aboveLum = pixelLum(bitmap.getPixel(sampleX, y - 1))
-            val insideLum = pixelLum(bitmap.getPixel(sampleX, y + 1))
-            if (aboveLum < 70.0 && insideLum > 110.0) {
-                snappedTop = y
-                break
-            }
-        }
-
-        val rawBottom = snappedTop + size
-        var snappedBottom = rawBottom
-        for (y in (rawBottom - 25).coerceAtLeast(1)..(rawBottom + 25).coerceAtMost(bitmap.height - 2)) {
-            val insideLum = pixelLum(bitmap.getPixel(sampleX, y - 1))
-            val belowLum = pixelLum(bitmap.getPixel(sampleX, y + 1))
-            if (insideLum > 110.0 && belowLum < 70.0) {
-                snappedBottom = y
-                break
-            }
-        }
-
-        val finalHeight = snappedBottom - snappedTop
-        val finalWidth = if (abs(finalHeight - size) <= 18) finalHeight else size
-        val snappedLeft = ((bitmap.width - finalWidth) / 2f).coerceAtLeast(0f)
-        val snappedRight = (snappedLeft + finalWidth).coerceAtMost(bitmap.width.toFloat())
-
-        return listOf(
-            PointF(snappedLeft, snappedTop.toFloat()),
-            PointF(snappedRight, snappedTop.toFloat()),
-            PointF(snappedRight, snappedBottom.toFloat()),
-            PointF(snappedLeft, snappedBottom.toFloat())
-        )
-    }
-
-    private fun scoreBoardCandidate(
-        bitmap: Bitmap,
-        left: Float,
-        top: Float,
-        size: Float,
-        coarse: Boolean
-    ): Double {
+    private fun scoreExactBoard(bitmap: Bitmap, left: Float, top: Float, size: Float): Double {
         val cell = size / 8f
-        val d = (cell * 0.13f).coerceAtLeast(3f)
+        val d = (cell * 0.09f).coerceAtLeast(3f)
 
+        // A. Cek ketajaman batas luar atas (top) & bawah (top + size)
+        var borderHits = 0
+        for (col in 0..7) {
+            val x = (left + (col + 0.14f) * cell).roundToInt().coerceIn(0, bitmap.width - 1)
+            val topOut = (top - 3f).roundToInt()
+            val topIn = (top + 3f).roundToInt()
+            val botIn = (top + size - 3f).roundToInt()
+            val botOut = (top + size + 3f).roundToInt()
+
+            if (topOut >= 0 && isDarkUiPixel(bitmap.getPixel(x, topOut)) &&
+                isWarmBoardPixel(bitmap.getPixel(x, topIn))
+            ) {
+                borderHits++
+            }
+            if (botOut < bitmap.height && isWarmBoardPixel(bitmap.getPixel(x, botIn)) &&
+                isDarkUiPixel(bitmap.getPixel(x, botOut))
+            ) {
+                borderHits++
+            }
+        }
+        if (borderHits < 10) return -1.0
+
+        // B. Cek arah kontras papan catur pada tengah papan
         var expectedSign = 0
-        var quickHits = 0
         for (row in 3..4) {
             for (col in 3..4) {
                 val ix = left + col * cell
@@ -484,41 +528,34 @@ class BoardReader(private val context: Context) {
                 val parity = if ((row + col) % 2 == 0) 1 else -1
                 if (abs(diff) < 18.0) return -1.0
                 val s = if (diff > 0) parity else -parity
-                if (expectedSign == 0) {
-                    expectedSign = s
-                    quickHits++
-                } else if (s == expectedSign) {
-                    quickHits++
-                } else {
-                    return -1.0
-                }
+                if (expectedSign == 0) expectedSign = s
+                else if (s != expectedSign) return -1.0
             }
         }
-        if (quickHits < 4) return -1.0
+        if (expectedSign == 0) return -1.0
 
-        val step = if (coarse) 2 else 1
-        var totalScore = 0.0
+        // C. Evaluasi seluruh 49 titik pertemuan grid di dalam papan
+        var gridScore = 0.0
         var validNodes = 0
-
-        for (row in 1..7 step step) {
-            for (col in 1..7 step step) {
+        for (row in 1..7) {
+            for (col in 1..7) {
                 val ix = left + col * cell
                 val iy = top + row * cell
                 val diff = cornerContrast(bitmap, ix, iy, d)
                 val parity = if ((row + col) % 2 == 0) 1 else -1
                 val signedDiff = diff * parity * expectedSign
 
-                if (signedDiff > 16.0) {
-                    totalScore += minOf(signedDiff, 90.0) / 30.0
+                if (signedDiff > 18.0) {
+                    gridScore += minOf(signedDiff, 95.0) / 30.0
                     validNodes++
                 } else if (signedDiff < -10.0) {
-                    totalScore -= 2.0
+                    gridScore -= 2.5
                 }
             }
         }
 
-        if (coarse) return if (validNodes >= 9) totalScore else -1.0
-        return if (validNodes >= 34) totalScore else -1.0
+        if (validNodes < 36) return -1.0
+        return gridScore + (borderHits * 2.5)
     }
 
     private fun cornerContrast(bitmap: Bitmap, ix: Float, iy: Float, d: Float): Double {
