@@ -216,7 +216,6 @@ class BoardReader(private val context: Context) {
         row: Int,
         col: Int
     ): Pair<Char, Boolean> {
-        // Sampel 6 titik aman di bagian dalam tepi petak (bebas dari bidak tengah & bingkai luar)
         val bgOffsets = arrayOf(
             0.15f to 0.15f,
             0.85f to 0.15f,
@@ -237,7 +236,6 @@ class BoardReader(private val context: Context) {
                 val g = Color.green(c)
                 val b = Color.blue(c)
                 val yellowScore = ((r + g) * 0.5) - b
-                // Mendeteksi sorotan kuning baik pada petak terang maupun petak gelap
                 if (yellowScore > 74.0 && r > 152 && g > 138) {
                     yellowHits++
                 }
@@ -287,12 +285,10 @@ class BoardReader(private val context: Context) {
             }
         }
 
-        // Bidak Putih wajib memiliki area putih lebih dominan daripada isi gelap
         val isWhitePiece = (neutralWhiteCount >= 28) &&
             (neutralWhiteCount > veryDarkCount) &&
             (darkOutlineCount >= 8 || neutralWhiteCount >= 45)
 
-        // Bidak Hitam memiliki isi gelap dominan (tidak terpengaruh garis kilau putih di mahkota)
         val isBlackPiece = !isWhitePiece &&
             (veryDarkCount >= 46) &&
             (veryDarkCount > neutralWhiteCount)
@@ -425,12 +421,47 @@ class BoardReader(private val context: Context) {
 
         if (fineBestScore < 18.0) return null
 
-        val l = fineLeft.toFloat()
-        val t = fineTop.toFloat()
-        val r = (fineLeft + fineSize).toFloat()
-        val b = (fineTop + fineSize).toFloat()
+        return snapBoardEdges(bitmap, fineLeft, fineTop, fineSize)
+    }
 
-        return listOf(PointF(l, t), PointF(r, t), PointF(r, b), PointF(l, b))
+    /**
+     * Mengunci garis tepi atas & bawah papan tepat pada perbatasan latar gelap UI
+     * dengan kotak papan catur agar ke-64 titik berada tepat di tengah petak.
+     */
+    private fun snapBoardEdges(bitmap: Bitmap, left: Int, top: Int, size: Int): List<PointF> {
+        val sampleX = (left + size * 0.06f).roundToInt().coerceIn(0, bitmap.width - 1)
+        var snappedTop = top
+        for (y in (top - 25).coerceAtLeast(1)..(top + 25).coerceAtMost(bitmap.height - 2)) {
+            val aboveLum = pixelLum(bitmap.getPixel(sampleX, y - 1))
+            val insideLum = pixelLum(bitmap.getPixel(sampleX, y + 1))
+            if (aboveLum < 70.0 && insideLum > 110.0) {
+                snappedTop = y
+                break
+            }
+        }
+
+        val rawBottom = snappedTop + size
+        var snappedBottom = rawBottom
+        for (y in (rawBottom - 25).coerceAtLeast(1)..(rawBottom + 25).coerceAtMost(bitmap.height - 2)) {
+            val insideLum = pixelLum(bitmap.getPixel(sampleX, y - 1))
+            val belowLum = pixelLum(bitmap.getPixel(sampleX, y + 1))
+            if (insideLum > 110.0 && belowLum < 70.0) {
+                snappedBottom = y
+                break
+            }
+        }
+
+        val finalHeight = snappedBottom - snappedTop
+        val finalWidth = if (abs(finalHeight - size) <= 18) finalHeight else size
+        val snappedLeft = ((bitmap.width - finalWidth) / 2f).coerceAtLeast(0f)
+        val snappedRight = (snappedLeft + finalWidth).coerceAtMost(bitmap.width.toFloat())
+
+        return listOf(
+            PointF(snappedLeft, snappedTop.toFloat()),
+            PointF(snappedRight, snappedTop.toFloat()),
+            PointF(snappedRight, snappedBottom.toFloat()),
+            PointF(snappedLeft, snappedBottom.toFloat())
+        )
     }
 
     private fun scoreBoardCandidate(
@@ -487,21 +518,7 @@ class BoardReader(private val context: Context) {
         }
 
         if (coarse) return if (validNodes >= 9) totalScore else -1.0
-        if (validNodes < 34) return -1.0
-
-        // Verifikasi batas atas & bawah papan bertemu latar belakang gelap UI aplikasi
-        val midX = (left + size * 0.5f).roundToInt()
-        val aboveTop = (top - 6f).roundToInt()
-        val belowBottom = (top + size + 6f).roundToInt()
-        if (midX in 0 until bitmap.width && aboveTop >= 0 && belowBottom < bitmap.height) {
-            val topOutLum = pixelLum(bitmap.getPixel(midX, aboveTop))
-            val botOutLum = pixelLum(bitmap.getPixel(midX, belowBottom))
-            if (topOutLum < 75.0 && botOutLum < 75.0) {
-                totalScore += 5.0
-            }
-        }
-
-        return totalScore
+        return if (validNodes >= 34) totalScore else -1.0
     }
 
     private fun cornerContrast(bitmap: Bitmap, ix: Float, iy: Float, d: Float): Double {
