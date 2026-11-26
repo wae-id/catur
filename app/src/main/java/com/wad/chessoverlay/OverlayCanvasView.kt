@@ -10,28 +10,29 @@ import android.view.View
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.sin
 
 class OverlayCanvasView(context: Context) : View(context) {
 
     private val textPaint = Paint().apply {
         color = Color.GREEN
-        textSize = 34f
+        textSize = 31f
         isAntiAlias = true
     }
 
     private val dotPaint = Paint().apply {
-        color = Color.argb(140, 255, 60, 60)
+        color = Color.argb(130, 255, 60, 60)
         style = Paint.Style.FILL
         isAntiAlias = true
     }
 
     private val bgPaint = Paint().apply {
-        color = Color.parseColor("#B3000000")
+        color = Color.parseColor("#CC000000")
     }
 
     private val arrowPaint = Paint().apply {
-        color = Color.argb(220, 0, 230, 118)
+        color = Color.argb(225, 0, 230, 118)
         strokeWidth = 14f
         strokeCap = Paint.Cap.ROUND
         style = Paint.Style.STROKE
@@ -39,7 +40,7 @@ class OverlayCanvasView(context: Context) : View(context) {
     }
 
     private val headPaint = Paint().apply {
-        color = Color.argb(235, 0, 230, 118)
+        color = Color.argb(240, 0, 230, 118)
         style = Paint.Style.FILL
         isAntiAlias = true
     }
@@ -48,15 +49,29 @@ class OverlayCanvasView(context: Context) : View(context) {
 
     var fpsText = ""
     var bestMove = ""
+    var evalText = ""
     var points: List<PointF>? = null
     var isFlipped = false
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        canvas.drawRoundRect(20f, 80f, 520f, 200f, 16f, 16f, bgPaint)
-        canvas.drawText(fpsText, 40f, 128f, textPaint)
-        canvas.drawText("Best Move: ${bestMove.ifEmpty { "-" }}", 40f, 175f, textPaint)
+        val moveDisplay = if (bestMove.isEmpty()) {
+            "Best Move: -"
+        } else if (evalText.isNotEmpty()) {
+            "Best Move: $bestMove ($evalText)"
+        } else {
+            "Best Move: $bestMove"
+        }
+
+        val boxRight = max(
+            480f,
+            max(textPaint.measureText(fpsText), textPaint.measureText(moveDisplay)) + 76f
+        ).coerceAtMost(width - 20f)
+
+        canvas.drawRoundRect(20f, 80f, boxRight, 196f, 16f, 16f, bgPaint)
+        canvas.drawText(fpsText, 38f, 126f, textPaint)
+        canvas.drawText(moveDisplay, 38f, 172f, textPaint)
 
         val calibPoints = points ?: return
         if (calibPoints.size != 4) return
@@ -64,7 +79,6 @@ class OverlayCanvasView(context: Context) : View(context) {
         val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
         val matrix = Homography.getPerspectiveTransform(src, calibPoints)
 
-        // Titik kecil untuk memastikan kalibrasi 64 kotak tetap sejajar
         for (r in 0..7) {
             for (c in 0..7) {
                 val center = Homography.transformPoint(matrix, PointF(c + 0.5f, r + 0.5f))
@@ -108,7 +122,6 @@ class OverlayCanvasView(context: Context) : View(context) {
         val headLength = 38f
         val headAngle = Math.toRadians(28.0)
 
-        // Hentikan garis batang tepat di pangkal kepala panah agar tidak menumpuk di ujung
         val lineEndX = (endX - (headLength * 0.75f) * cos(angle)).toFloat()
         val lineEndY = (endY - (headLength * 0.75f) * sin(angle)).toFloat()
         canvas.drawLine(startX, startY, lineEndX, lineEndY, arrowPaint)
