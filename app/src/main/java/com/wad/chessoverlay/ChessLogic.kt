@@ -1,4 +1,4 @@
-package com.wad.chessoverlay
+ package com.wad.chessoverlay
 
 class ChessLogic {
     val board = Array(8) { CharArray(8) { '.' } }
@@ -91,42 +91,76 @@ class ChessLogic {
                 return
             }
 
-            // Prioritaskan sisi yang sedang memegang giliran saat ini
             val expectedSide = if (currentTurn == "w") 1 else -1
             val orderedSides = listOf(expectedSide, -expectedSide)
 
-            val onePlyResult = findBestLegalSequenceWithTurn(
+            // 1. Cari langkah legal 1-ply atau 2-ply yang cocok PERSIS 64/64 petak
+            val exactOnePly = findBestLegalSequenceWithTurn(
                 oriented,
                 orderedSides,
                 maxDepth = 1,
                 highlights = highlightedSquares,
-                expectedFirstSide = expectedSide
+                expectedFirstSide = expectedSide,
+                minRequiredMatches = 64
             )
-            if (onePlyResult != null) {
-                applyChosenState(onePlyResult.first, detectedTurn ?: onePlyResult.second)
+            if (exactOnePly != null) {
+                applyChosenState(exactOnePly.first, detectedTurn ?: exactOnePly.second)
                 enforceCheckTurnInvariant(mySide, oppSide)
                 desyncFrames = 0
                 return
             }
 
-            val twoPlyResult = findBestLegalSequenceWithTurn(
+            val exactTwoPly = findBestLegalSequenceWithTurn(
                 oriented,
                 orderedSides,
                 maxDepth = 2,
                 highlights = highlightedSquares,
-                expectedFirstSide = expectedSide
+                expectedFirstSide = expectedSide,
+                minRequiredMatches = 64
             )
-            if (twoPlyResult != null) {
-                applyChosenState(twoPlyResult.first, detectedTurn ?: twoPlyResult.second)
+            if (exactTwoPly != null) {
+                applyChosenState(exactTwoPly.first, detectedTurn ?: exactTwoPly.second)
                 enforceCheckTurnInvariant(mySide, oppSide)
                 desyncFrames = 0
                 return
             }
 
-            desyncFrames++
-            if (desyncFrames >= 18) {
+            // 2. Cadangan jika ada 1 petak silau (63/64 petak cocok)
+            val nearOnePly = findBestLegalSequenceWithTurn(
+                oriented,
+                orderedSides,
+                maxDepth = 1,
+                highlights = highlightedSquares,
+                expectedFirstSide = expectedSide,
+                minRequiredMatches = 63
+            )
+            if (nearOnePly != null) {
+                applyChosenState(nearOnePly.first, detectedTurn ?: nearOnePly.second)
+                enforceCheckTurnInvariant(mySide, oppSide)
                 desyncFrames = 0
-                syncFromClassifiedBoard(oriented)
+                return
+            }
+
+            val nearTwoPly = findBestLegalSequenceWithTurn(
+                oriented,
+                orderedSides,
+                maxDepth = 2,
+                highlights = highlightedSquares,
+                expectedFirstSide = expectedSide,
+                minRequiredMatches = 63
+            )
+            if (nearTwoPly != null) {
+                applyChosenState(nearTwoPly.first, detectedTurn ?: nearTwoPly.second)
+                enforceCheckTurnInvariant(mySide, oppSide)
+                desyncFrames = 0
+                return
+            }
+
+            // 3. Jika lebih dari 2 langkah terlewat, sinkronkan ulang papan dalam 4 frame
+            desyncFrames++
+            if (desyncFrames >= 4) {
+                desyncFrames = 0
+                reconcileBoardWithScan(oriented)
                 hasTrackedGame = true
                 currentTurn = detectedTurn ?: (if (isFlipped) "b" else "w")
                 enforceCheckTurnInvariant(mySide, oppSide)
@@ -140,8 +174,25 @@ class ChessLogic {
     }
 
     /**
-     * Aturan mutlak catur: pihak yang Rajanya sedang dalam posisi skak pasti sedang memegang giliran.
+     * Mempertahankan identitas bidak yang tidak berpindah tempat, dan memperbarui
+     * petak yang berubah sesuai hasil pindaian layar terbaru.
      */
+    private fun reconcileBoardWithScan(scan: Array<CharArray>) {
+        val merged = Array(8) { CharArray(8) { '.' } }
+        for (r in 0..7) {
+            for (c in 0..7) {
+                val oldPiece = board[r][c]
+                val newPiece = scan[r][c]
+                merged[r][c] = when {
+                    newPiece == '.' -> '.'
+                    oldPiece != '.' && pieceColor(oldPiece) == pieceColor(newPiece) -> oldPiece
+                    else -> newPiece
+                }
+            }
+        }
+        syncFromClassifiedBoard(merged)
+    }
+
     private fun enforceCheckTurnInvariant(mySide: Int, oppSide: Int) {
         val myInCheck = isKingInCheck(board, mySide)
         val oppInCheck = isKingInCheck(board, oppSide)
@@ -201,7 +252,8 @@ class ChessLogic {
         firstSides: List<Int>,
         maxDepth: Int,
         highlights: Set<Pair<Int, Int>>,
-        expectedFirstSide: Int
+        expectedFirstSide: Int,
+        minRequiredMatches: Int
     ): Pair<MoveCandidate, String>? {
         var bestCandidate: MoveCandidate? = null
         var bestNextTurn = "w"
@@ -228,7 +280,7 @@ class ChessLogic {
                 if (maxDepth == 1) {
                     val (occMatches, baseScore) = evaluateMatch(m1, targetScan, highlights)
                     val totalScore = baseScore + turnOrderBonus
-                    if (occMatches >= 62 && totalScore > bestTotalScore) {
+                    if (occMatches >= minRequiredMatches && totalScore > bestTotalScore) {
                         bestOccupancyMatches = occMatches
                         bestTotalScore = totalScore
                         bestCandidate = m1
@@ -240,7 +292,7 @@ class ChessLogic {
                     for (m2 in moves2) {
                         val (occMatches, baseScore) = evaluateMatch(m2, targetScan, highlights)
                         val totalScore = baseScore + turnOrderBonus
-                        if (occMatches >= 62 && totalScore > bestTotalScore) {
+                        if (occMatches >= minRequiredMatches && totalScore > bestTotalScore) {
                             bestOccupancyMatches = occMatches
                             bestTotalScore = totalScore
                             bestCandidate = m2
@@ -251,7 +303,7 @@ class ChessLogic {
             }
         }
 
-        return if (bestCandidate != null && bestOccupancyMatches >= 62) {
+        return if (bestCandidate != null && bestOccupancyMatches >= minRequiredMatches) {
             bestCandidate to bestNextTurn
         } else {
             null
@@ -636,7 +688,7 @@ class ChessLogic {
         if (canBlackCastleQ && board[0][4] == 'k' && board[0][0] == 'r') castleSb.append('q')
         val castleStr = if (castleSb.isEmpty()) "-" else castleSb.toString()
 
-        return "$sb $turn $castleStr $enPassantSquare 0 1"
+        return "$sb $turn $castleStr - 0 1"
     }
 
     private fun pieceColor(p: Char): Int = when {
