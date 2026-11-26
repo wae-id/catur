@@ -5,6 +5,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.util.Locale
 
 class StockfishEngine(private val context: Context) {
     private var process: Process? = null
@@ -44,8 +45,11 @@ class StockfishEngine(private val context: Context) {
                 return
             }
 
-            sendCommand("setoption name Threads value 2")
-            sendCommand("setoption name Hash value 32")
+            // Maksimalkan kekuatan analisis Stockfish
+            sendCommand("setoption name Threads value 4")
+            sendCommand("setoption name Hash value 64")
+            sendCommand("setoption name Skill Level value 20")
+            sendCommand("setoption name Move Overhead value 50")
 
             sendCommand("isready")
             val readyOutput = waitFor("readyok")
@@ -88,31 +92,35 @@ class StockfishEngine(private val context: Context) {
         return sb.toString()
     }
 
+    /**
+     * Mengembalikan Pair(bestMove, evalString), contoh: ("e7e5", "+0.35") atau ("d8h4", "M2")
+     */
     @Synchronized
-    fun getBestMove(fen: String): String {
-        if (fen.isBlank()) return ""
+    fun getBestMoveWithEval(fen: String): Pair<String, String> {
+        if (fen.isBlank()) return "" to ""
 
-        // Coba hitung langkah; jika proses sempat tertutup, nyalakan ulang otomatis 1x
-        val firstTry = queryBestMoveInternal(fen)
+        val firstTry = queryInternal(fen)
         if (firstTry != null) return firstTry
 
         isReady = false
         start()
-        if (!isReady) return ""
+        if (!isReady) return "" to ""
 
-        return queryBestMoveInternal(fen) ?: ""
+        return queryInternal(fen) ?: ("" to "")
     }
 
-    private fun queryBestMoveInternal(fen: String): String? {
+    private fun queryInternal(fen: String): Pair<String, String>? {
         if (!isReady || process?.isAlive != true) return null
 
         if (!sendCommand("isready")) return null
         if (!waitFor("readyok").contains("readyok")) return null
 
         if (!sendCommand("position fen $fen")) return null
-        if (!sendCommand("go movetime 800")) return null
+        if (!sendCommand("go movetime 1200")) return null
 
         var bestMove = ""
+        var latestEval = ""
+
         try {
             var line: String?
             while (reader?.readLine().also { line = it } != null) {
@@ -120,8 +128,13 @@ class StockfishEngine(private val context: Context) {
                 if (text.contains("CRITICAL ERROR")) {
                     errorMsg = "FEN ditolak"
                     isReady = false
-                    return ""
+                    return "" to ""
                 }
+
+                if (text.startsWith("info") && text.contains(" score ")) {
+                    latestEval = parseScore(text)
+                }
+
                 if (text.startsWith("bestmove")) {
                     val parts = text.trim().split("\\s+".toRegex())
                     if (parts.size >= 2) {
@@ -141,7 +154,31 @@ class StockfishEngine(private val context: Context) {
         }
 
         errorMsg = ""
-        return if (bestMove.isEmpty() || bestMove == "(none)") "" else bestMove
+        return if (bestMove.isEmpty() || bestMove == "(none)") {
+            "" to ""
+        } else {
+            bestMove to latestEval
+        }
+    }
+
+    private fun parseScore(infoLine: String): String {
+        val tokens = infoLine.trim().split("\\s+".toRegex())
+        val scoreIdx = tokens.indexOf("score")
+        if (scoreIdx == -1 || scoreIdx + 2 >= tokens.size) return ""
+
+        val type = tokens[scoreIdx + 1]
+        val value = tokens[scoreIdx + 2].toIntOrNull() ?: return ""
+
+        return when (type) {
+            "cp" -> {
+                val pawns = value / 100.0
+                String.format(Locale.US, "%+.2f", pawns)
+            }
+            "mate" -> {
+                if (value > 0) "M$value" else "-M${-value}"
+            }
+            else -> ""
+        }
     }
 
     @Synchronized
