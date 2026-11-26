@@ -7,7 +7,6 @@ import android.graphics.PointF
 import org.json.JSONArray
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.sqrt
 
 class BoardReader(private val context: Context) {
 
@@ -62,92 +61,64 @@ class BoardReader(private val context: Context) {
         row: Int,
         col: Int
     ): Char {
-        // 1. Ambil sampel warna latar kotak dari 4 sudut dalam kotak
-        val cornerOffsets = arrayOf(
-            0.12f to 0.12f,
-            0.88f to 0.12f,
-            0.12f to 0.88f,
-            0.88f to 0.88f
-        )
+        val gridSize = 14
+        val whiteMask = Array(gridSize) { BooleanArray(gridSize) }
+        val darkMask = Array(gridSize) { BooleanArray(gridSize) }
 
-        var bgR = 0.0
-        var bgG = 0.0
-        var bgB = 0.0
-        var bgCount = 0
-
-        for ((ox, oy) in cornerOffsets) {
-            val pt = Homography.transformPoint(matrix, PointF(col + ox, row + oy))
-            val px = pt.x.toInt()
-            val py = pt.y.toInt()
-            if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
-                val c = bitmap.getPixel(px, py)
-                bgR += Color.red(c)
-                bgG += Color.green(c)
-                bgB += Color.blue(c)
-                bgCount++
-            }
-        }
-
-        if (bgCount == 0) return '.'
-        bgR /= bgCount
-        bgG /= bgCount
-        bgB /= bgCount
-        val bgWarmth = bgR - bgB
-
-        // 2. Pindai area dalam kotak (grid 12x12) menggunakan jarak warna + saturasi + gradien tepi
-        val gridSize = 12
-        val mask = Array(gridSize) { BooleanArray(gridSize) }
-        val luminances = mutableListOf<Double>()
+        var neutralWhiteCount = 0
+        var pureBrightWhiteCount = 0
+        var darkOutlineCount = 0
+        var veryDarkCount = 0
 
         for (gy in 0 until gridSize) {
-            val v = 0.18f + (gy.toFloat() / (gridSize - 1)) * 0.64f
+            val v = 0.16f + (gy.toFloat() / (gridSize - 1)) * 0.68f
             for (gx in 0 until gridSize) {
-                val u = 0.18f + (gx.toFloat() / (gridSize - 1)) * 0.64f
+                val u = 0.16f + (gx.toFloat() / (gridSize - 1)) * 0.68f
                 val pt = Homography.transformPoint(matrix, PointF(col + u, row + v))
                 val px = pt.x.toInt()
                 val py = pt.y.toInt()
 
-                if (px in 2 until (bitmap.width - 2) && py in 2 until (bitmap.height - 2)) {
+                if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
                     val c = bitmap.getPixel(px, py)
-                    val r = Color.red(c).toDouble()
-                    val g = Color.green(c).toDouble()
-                    val b = Color.blue(c).toDouble()
+                    val r = Color.red(c)
+                    val g = Color.green(c)
+                    val b = Color.blue(c)
 
-                    val colorDist = sqrt(
-                        (r - bgR) * (r - bgR) +
-                        (g - bgG) * (g - bgG) +
-                        (b - bgB) * (b - bgB)
-                    )
+                    val lum = 0.299 * r + 0.587 * g + 0.114 * b
+                    val warmth = abs(r - b)
 
-                    // Perbedaan saturasi (mengatasi bidak putih di atas papan krem/kuning)
-                    val warmthDiff = abs((r - b) - bgWarmth)
+                    // Bidak putih memiliki warna putih netral (bukan kayu krem atau sorotan kuning)
+                    if (lum > 180.0 && warmth < 28) {
+                        neutralWhiteCount++
+                        whiteMask[gy][gx] = true
+                        if (lum > 235.0 && warmth < 16) {
+                            pureBrightWhiteCount++
+                        }
+                    }
 
-                    // Gradien lokal (mendeteksi garis tepi/bayangan bidak pada petak datar)
-                    val cRight = bitmap.getPixel(px + 2, py)
-                    val cDown = bitmap.getPixel(px, py + 2)
-                    val edgeDiff = abs(r - Color.red(cRight)) +
-                        abs(g - Color.green(cRight)) +
-                        abs(b - Color.blue(cDown))
+                    // Garis tepi gelap (ada pada bidak putih maupun hitam)
+                    if (lum < 110.0) {
+                        darkOutlineCount++
+                        darkMask[gy][gx] = true
+                    }
 
-                    if (colorDist > 24.0 || (colorDist > 14.0 && warmthDiff > 22.0) || edgeDiff > 36.0) {
-                        mask[gy][gx] = true
-                        val lum = 0.299 * r + 0.587 * g + 0.114 * b
-                        luminances.add(lum)
+                    // Isi gelap pekat (khusus bidak hitam)
+                    if (lum < 82.0) {
+                        veryDarkCount++
                     }
                 }
             }
         }
 
-        if (luminances.size < 12) return '.'
+        val isWhitePiece = (neutralWhiteCount >= 9 && darkOutlineCount >= 5) ||
+            (pureBrightWhiteCount >= 12)
+        val isBlackPiece = !isWhitePiece && (veryDarkCount >= 14)
 
-        // 3. Gunakan persentil ke-85 kecerahan (isi utama bidak, mengabaikan garis tepi hitam)
-        luminances.sort()
-        val p85Lum = luminances[(luminances.size * 0.85).toInt().coerceIn(0, luminances.lastIndex)]
-        val isWhite = p85Lum > 165.0
+        if (!isWhitePiece && !isBlackPiece) return '.'
 
-        // 4. Klasifikasi bentuk siluet untuk fallback tengah permainan
-        val pieceType = classifySilhouette(mask)
-        return if (isWhite) pieceType.uppercaseChar() else pieceType.lowercaseChar()
+        val activeMask = if (isWhitePiece) whiteMask else darkMask
+        val pieceType = classifySilhouette(activeMask)
+        return if (isWhitePiece) pieceType.uppercaseChar() else pieceType.lowercaseChar()
     }
 
     private fun classifySilhouette(mask: Array<BooleanArray>): Char {
@@ -182,7 +153,7 @@ class BoardReader(private val context: Context) {
 
         if (maxY < minY) return 'P'
         val height = maxY - minY + 1
-        if (height <= 6) return 'P'
+        if (height <= 7) return 'P'
 
         val topWidth = max(rowWidths[minY], rowWidths[(minY + 1).coerceAtMost(maxY)])
         val midY = minY + height / 2
@@ -191,9 +162,9 @@ class BoardReader(private val context: Context) {
 
         return when {
             maxSegmentsTop >= 2 && topWidth >= 5 -> 'Q'
-            topWidth >= 5 && height in 7..9 -> 'R'
-            height >= 10 && topWidth <= 4 -> 'K'
-            height >= 9 && midWidth >= 5 && topWidth <= 4 -> 'B'
+            topWidth >= 5 && height in 8..10 -> 'R'
+            height >= 11 && topWidth <= 4 -> 'K'
+            height >= 10 && midWidth >= 5 && topWidth <= 4 -> 'B'
             midWidth >= 6 && topWidth in 3..5 -> 'N'
             else -> 'P'
         }
