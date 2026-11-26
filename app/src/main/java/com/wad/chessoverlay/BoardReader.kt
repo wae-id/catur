@@ -12,6 +12,7 @@ import kotlin.math.roundToInt
 class BoardReader(private val context: Context) {
 
     private val chessLogic = ChessLogic()
+    var autoDetectSide = true
     var isUserPlayingBlack = false
     var detectedPoints: List<PointF>? = null
     var statusNote = ""
@@ -65,18 +66,11 @@ class BoardReader(private val context: Context) {
         var pieceCount = 0
 
         for (row in 0..7) {
-            var rowWhiteCount = 0
             for (col in 0..7) {
                 val (piece, isHighlighted) = analyzeSquare(screenBitmap, matrix, row, col)
                 detectedBoard[row][col] = piece
                 if (piece != '.') pieceCount++
-                if (piece.isUpperCase()) rowWhiteCount++
                 if (isHighlighted) highlightedSquares.add(row to col)
-            }
-            // Abaikan frame jika ada popup teks putih besar menutupi 1 baris penuh (misal "CHECKMATE!")
-            if (rowWhiteCount >= 7 && row in 0..3) {
-                statusNote = "Popup terdeteksi"
-                return ""
             }
         }
 
@@ -91,7 +85,16 @@ class BoardReader(private val context: Context) {
         }
         missedBoardFrames = 0
 
-        // Deteksi siapa yang baru saja melangkah dari 2 kotak sorotan kuning di layar
+        // Deteksi otomatis apakah pengguna bermain sebagai Putih atau Hitam
+        if (autoDetectSide) {
+            val detectedBlackSide = detectSideAutomatically(detectedBoard)
+            if (detectedBlackSide != null && detectedBlackSide != isUserPlayingBlack) {
+                isUserPlayingBlack = detectedBlackSide
+                chessLogic.reset()
+            }
+        }
+
+        // Deteksi giliran dari 2 kotak sorotan kuning langkah terakhir
         val detectedTurnFromHighlight = inferTurnFromHighlights(detectedBoard, highlightedSquares)
 
         chessLogic.updateFromScan(detectedBoard, isUserPlayingBlack, detectedTurnFromHighlight)
@@ -99,7 +102,6 @@ class BoardReader(private val context: Context) {
         val myTurn = if (isUserPlayingBlack) "b" else "w"
         val activeTurn = detectedTurnFromHighlight ?: chessLogic.currentTurn
 
-        // Hanya hitung langkah jika sekarang giliran Anda; kosongkan panah saat lawan berpikir
         if (activeTurn != myTurn) {
             statusNote = "Menunggu lawan..."
             return ""
@@ -107,6 +109,43 @@ class BoardReader(private val context: Context) {
 
         statusNote = ""
         return chessLogic.toFEN(myTurn)
+    }
+
+    /**
+     * Menentukan orientasi papan secara otomatis:
+     * - Jika bidak Putih di baris atas (0..1) dan Hitam di bawah (6..7) -> true (User Hitam)
+     * - Jika bidak Hitam di baris atas (0..1) dan Putih di bawah (6..7) -> false (User Putih)
+     */
+    private fun detectSideAutomatically(rawBoard: Array<CharArray>): Boolean? {
+        var topWhite = 0
+        var topBlack = 0
+        var bottomWhite = 0
+        var bottomBlack = 0
+
+        for (r in 0..1) {
+            for (c in 0..7) {
+                val p = rawBoard[r][c]
+                if (p.isUpperCase()) topWhite++
+                else if (p.isLowerCase()) topBlack++
+            }
+        }
+
+        for (r in 6..7) {
+            for (c in 0..7) {
+                val p = rawBoard[r][c]
+                if (p.isUpperCase()) bottomWhite++
+                else if (p.isLowerCase()) bottomBlack++
+            }
+        }
+
+        if (topWhite >= 8 && bottomBlack >= 8 && topWhite > topBlack + 4 && bottomBlack > bottomWhite + 4) {
+            return true
+        }
+        if (topBlack >= 8 && bottomWhite >= 8 && topBlack > topWhite + 4 && bottomWhite > bottomBlack + 4) {
+            return false
+        }
+
+        return null
     }
 
     private fun inferTurnFromHighlights(
@@ -119,14 +158,12 @@ class BoardReader(private val context: Context) {
         val p1 = rawBoard[r1][c1]
         val p2 = rawBoard[r2][c2]
 
-        // Satu kotak kosong (asal) dan satu kotak terisi bidak yang baru mendarat (tujuan)
         val landedPiece = when {
             p1 == '.' && p2 != '.' -> p2
             p2 == '.' && p1 != '.' -> p1
             else -> return null
         }
 
-        // Jika bidak putih yang baru mendarat, sekarang giliran hitam ("b"), dan sebaliknya
         return if (landedPiece.isUpperCase()) "b" else "w"
     }
 
@@ -136,7 +173,6 @@ class BoardReader(private val context: Context) {
         row: Int,
         col: Int
     ): Pair<Char, Boolean> {
-        // 1. Cek warna sudut petak untuk mendeteksi sorotan kuning langkah terakhir
         val cornerOffsets = arrayOf(
             0.09f to 0.09f,
             0.91f to 0.09f,
@@ -170,7 +206,6 @@ class BoardReader(private val context: Context) {
             isHighlighted = yellowScore > 88.0 && bgR > 165.0 && bgG > 155.0
         }
 
-        // 2. Pindai siluet bidak dengan grid resolusi tinggi 24x24
         val gridSize = 24
         val whiteMask = Array(gridSize) { BooleanArray(gridSize) }
         val darkMask = Array(gridSize) { BooleanArray(gridSize) }
@@ -213,7 +248,6 @@ class BoardReader(private val context: Context) {
             }
         }
 
-        // Threshold disesuaikan untuk grid 24x24 (total 576 titik)
         val isWhitePiece = (neutralWhiteCount >= 26) && (darkOutlineCount >= 8 || neutralWhiteCount >= 42)
         val isBlackPiece = !isWhitePiece && (veryDarkCount >= 44)
 
