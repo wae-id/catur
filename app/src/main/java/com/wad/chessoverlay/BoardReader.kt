@@ -14,6 +14,7 @@ class BoardReader(private val context: Context) {
     private val chessLogic = ChessLogic()
     var isUserPlayingBlack = false
     var detectedPoints: List<PointF>? = null
+    var statusNote = ""
     private var missedBoardFrames = 0
 
     init {
@@ -43,49 +44,249 @@ class BoardReader(private val context: Context) {
         chessLogic.reset()
         detectedPoints = loadManualCalibration()
         missedBoardFrames = 0
+        statusNote = ""
     }
 
     fun scanFullBoard(screenBitmap: Bitmap): String {
-        // 1. Jika papan belum terkunci, jalankan deteksi otomatis 8x8
         if (detectedPoints == null) {
             detectedPoints = autoDetectBoard(screenBitmap)
         }
 
-        val points = detectedPoints ?: return ""
+        val points = detectedPoints ?: run {
+            statusNote = "Mencari papan..."
+            return ""
+        }
+
         val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
         val matrix = Homography.getPerspectiveTransform(src, points)
 
         val detectedBoard = Array(8) { CharArray(8) { '.' } }
+        val highlightedSquares = mutableListOf<Pair<Int, Int>>()
         var pieceCount = 0
 
         for (row in 0..7) {
+            var rowWhiteCount = 0
             for (col in 0..7) {
-                val p = detectSquarePiece(screenBitmap, matrix, row, col)
-                detectedBoard[row][col] = p
-                if (p != '.') pieceCount++
+                val (piece, isHighlighted) = analyzeSquare(screenBitmap, matrix, row, col)
+                detectedBoard[row][col] = piece
+                if (piece != '.') pieceCount++
+                if (piece.isUpperCase()) rowWhiteCount++
+                if (isHighlighted) highlightedSquares.add(row to col)
+            }
+            // Abaikan frame jika ada popup teks putih besar menutupi 1 baris penuh (misal "CHECKMATE!")
+            if (rowWhiteCount >= 7 && row in 0..3) {
+                statusNote = "Popup terdeteksi"
+                return ""
             }
         }
 
-        // Jika papan tiba-tiba kosong (misal pindah menu/iklan), scan ulang posisi papan
         if (pieceCount < 2) {
             missedBoardFrames++
             if (missedBoardFrames >= 4) {
                 detectedPoints = autoDetectBoard(screenBitmap)
                 missedBoardFrames = 0
             }
+            statusNote = "Mencari papan..."
             return ""
         }
         missedBoardFrames = 0
 
-        chessLogic.updateFromScan(detectedBoard, isUserPlayingBlack)
+        // Deteksi siapa yang baru saja melangkah dari 2 kotak sorotan kuning di layar
+        val detectedTurnFromHighlight = inferTurnFromHighlights(detectedBoard, highlightedSquares)
 
-        val turn = if (isUserPlayingBlack) "b" else "w"
-        return chessLogic.toFEN(turn)
+        chessLogic.updateFromScan(detectedBoard, isUserPlayingBlack, detectedTurnFromHighlight)
+
+        val myTurn = if (isUserPlayingBlack) "b" else "w"
+        val activeTurn = detectedTurnFromHighlight ?: chessLogic.currentTurn
+
+        // Hanya hitung langkah jika sekarang giliran Anda; kosongkan panah saat lawan berpikir
+        if (activeTurn != myTurn) {
+            statusNote = "Menunggu lawan..."
+            return ""
+        }
+
+        statusNote = ""
+        return chessLogic.toFEN(myTurn)
     }
 
-    /**
-     * Mendeteksi koordinat 4 sudut papan catur 8x8 secara otomatis dari pola 49 perpotongan petak.
-     */
+    private fun inferTurnFromHighlights(
+        rawBoard: Array<CharArray>,
+        highlights: List<Pair<Int, Int>>
+    ): String? {
+        if (highlights.size != 2) return null
+        val (r1, c1) = highlights[0]
+        val (r2, c2) = highlights[1]
+        val p1 = rawBoard[r1][c1]
+        val p2 = rawBoard[r2][c2]
+
+        // Satu kotak kosong (asal) dan satu kotak terisi bidak yang baru mendarat (tujuan)
+        val landedPiece = when {
+            p1 == '.' && p2 != '.' -> p2
+            p2 == '.' && p1 != '.' -> p1
+            else -> return null
+        }
+
+        // Jika bidak putih yang baru mendarat, sekarang giliran hitam ("b"), dan sebaliknya
+        return if (landedPiece.isUpperCase()) "b" else "w"
+    }
+
+    private fun analyzeSquare(
+        bitmap: Bitmap,
+        matrix: FloatArray,
+        row: Int,
+        col: Int
+    ): Pair<Char, Boolean> {
+        // 1. Cek warna sudut petak untuk mendeteksi sorotan kuning langkah terakhir
+        val cornerOffsets = arrayOf(
+            0.09f to 0.09f,
+            0.91f to 0.09f,
+            0.09f to 0.91f,
+            0.91f to 0.91f
+        )
+        var bgR = 0.0
+        var bgG = 0.0
+        var bgB = 0.0
+        var bgCount = 0
+
+        for ((ox, oy) in cornerOffsets) {
+            val pt = Homography.transformPoint(matrix, PointF(col + ox, row + oy))
+            val px = pt.x.toInt()
+            val py = pt.y.toInt()
+            if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
+                val c = bitmap.getPixel(px, py)
+                bgR += Color.red(c)
+                bgG += Color.green(c)
+                bgB += Color.blue(c)
+                bgCount++
+            }
+        }
+
+        var isHighlighted = false
+        if (bgCount > 0) {
+            bgR /= bgCount
+            bgG /= bgCount
+            bgB /= bgCount
+            val yellowScore = ((bgR + bgG) * 0.5) - bgB
+            isHighlighted = yellowScore > 88.0 && bgR > 165.0 && bgG > 155.0
+        }
+
+        // 2. Pindai siluet bidak dengan grid resolusi tinggi 24x24
+        val gridSize = 24
+        val whiteMask = Array(gridSize) { BooleanArray(gridSize) }
+        val darkMask = Array(gridSize) { BooleanArray(gridSize) }
+
+        var neutralWhiteCount = 0
+        var darkOutlineCount = 0
+        var veryDarkCount = 0
+
+        for (gy in 0 until gridSize) {
+            val v = 0.13f + (gy.toFloat() / (gridSize - 1)) * 0.74f
+            for (gx in 0 until gridSize) {
+                val u = 0.13f + (gx.toFloat() / (gridSize - 1)) * 0.74f
+                val pt = Homography.transformPoint(matrix, PointF(col + u, row + v))
+                val px = pt.x.toInt()
+                val py = pt.y.toInt()
+
+                if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
+                    val c = bitmap.getPixel(px, py)
+                    val r = Color.red(c)
+                    val g = Color.green(c)
+                    val b = Color.blue(c)
+
+                    val lum = 0.299 * r + 0.587 * g + 0.114 * b
+                    val warmth = abs(r - b)
+
+                    if (lum > 188.0 && warmth < 34) {
+                        neutralWhiteCount++
+                        whiteMask[gy][gx] = true
+                    }
+
+                    if (lum < 112.0) {
+                        darkOutlineCount++
+                        darkMask[gy][gx] = true
+                    }
+
+                    if (lum < 90.0) {
+                        veryDarkCount++
+                    }
+                }
+            }
+        }
+
+        // Threshold disesuaikan untuk grid 24x24 (total 576 titik)
+        val isWhitePiece = (neutralWhiteCount >= 26) && (darkOutlineCount >= 8 || neutralWhiteCount >= 42)
+        val isBlackPiece = !isWhitePiece && (veryDarkCount >= 44)
+
+        if (!isWhitePiece && !isBlackPiece) return '.' to isHighlighted
+
+        val activeMask = if (isWhitePiece) whiteMask else darkMask
+        val pieceType = classifySilhouette24(activeMask)
+        val pieceChar = if (isWhitePiece) pieceType.uppercaseChar() else pieceType.lowercaseChar()
+        return pieceChar to isHighlighted
+    }
+
+    private fun classifySilhouette24(mask: Array<BooleanArray>): Char {
+        val size = mask.size
+        var minY = size
+        var maxY = -1
+        val rowWidths = IntArray(size)
+        val rowSegments = IntArray(size)
+        var maxWidth = 0
+
+        for (y in 0 until size) {
+            var count = 0
+            var segments = 0
+            var inSeg = false
+            for (x in 0 until size) {
+                if (mask[y][x]) {
+                    count++
+                    if (!inSeg) {
+                        segments++
+                        inSeg = true
+                    }
+                } else {
+                    inSeg = false
+                }
+            }
+            rowWidths[y] = count
+            rowSegments[y] = segments
+            if (count > maxWidth) maxWidth = count
+            if (count > 0) {
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+            }
+        }
+
+        if (maxY < minY) return 'P'
+        val height = maxY - minY + 1
+        if (height <= 13 && maxWidth <= 14) return 'P'
+
+        val topBandEnd = (minY + (height * 0.16f).toInt()).coerceAtMost(maxY)
+        var wTop = 0
+        var topPeaks = 0
+        for (y in minY..topBandEnd) {
+            if (rowWidths[y] > wTop) wTop = rowWidths[y]
+            if (rowSegments[y] > topPeaks) topPeaks = rowSegments[y]
+        }
+
+        val neckY = (minY + (height * 0.28f).toInt()).coerceIn(minY, maxY)
+        val midY = (minY + (height * 0.52f).toInt()).coerceIn(minY, maxY)
+        val baseY = (maxY - (height * 0.12f).toInt()).coerceIn(minY, maxY)
+
+        val wNeck = rowWidths[neckY]
+        val wMid = rowWidths[midY]
+        val wBase = rowWidths[baseY]
+
+        return when {
+            wTop >= 10 && wNeck >= 8 && wTop >= (wBase * 0.65f).toInt() -> 'R'
+            topPeaks >= 2 && wTop >= 9 && height >= 15 -> 'Q'
+            height >= 17 && wTop <= 6 && wNeck >= 7 -> 'K'
+            height >= 15 && wTop <= 6 && wMid >= 8 && wNeck <= 8 -> 'B'
+            height >= 14 && (wNeck >= 8 || wMid >= 10) -> 'N'
+            else -> 'P'
+        }
+    }
+
     private fun autoDetectBoard(bitmap: Bitmap): List<PointF>? {
         val w = bitmap.width
         val h = bitmap.height
@@ -102,7 +303,6 @@ class BoardReader(private val context: Context) {
         var bestTop = 0
         var bestSize = 0
 
-        // Tahap 1: Pencarian cepat (coarse grid)
         for (size in minSize..maxSize step 10) {
             val leftLimit = minOf(maxLeft, w - size)
             for (left in 0..leftLimit step 8) {
@@ -121,7 +321,6 @@ class BoardReader(private val context: Context) {
 
         if (bestScore < 12.0 || bestSize == 0) return null
 
-        // Tahap 2: Penghalusan presisi hingga 2 piksel di sekitar kandidat terbaik
         var fineBestScore = -1.0
         var fineLeft = bestLeft
         var fineTop = bestTop
@@ -151,12 +350,7 @@ class BoardReader(private val context: Context) {
         val r = (fineLeft + fineSize).toFloat()
         val b = (fineTop + fineSize).toFloat()
 
-        return listOf(
-            PointF(l, t), // TL
-            PointF(r, t), // TR
-            PointF(r, b), // BR
-            PointF(l, b)  // BL
-        )
+        return listOf(PointF(l, t), PointF(r, t), PointF(r, b), PointF(l, b))
     }
 
     private fun scoreBoardCandidate(
@@ -169,7 +363,6 @@ class BoardReader(private val context: Context) {
         val cell = size / 8f
         val d = (cell * 0.14f).coerceAtLeast(3f)
 
-        // Uji cepat 4 titik perpotongan tengah untuk menolak kandidat non-papan seketika
         var expectedSign = 0
         var quickHits = 0
         for (row in 3..4) {
@@ -214,24 +407,6 @@ class BoardReader(private val context: Context) {
         }
 
         if (coarse) return if (validNodes >= 9) totalScore else -1.0
-
-        // Penalti jika pola papan catur masih berlanjut di luar batas (mencegah pergeseran 1 kotak)
-        val outerOffsets = arrayOf(
-            left - cell * 0.5f to top + cell * 3.5f,
-            left + size + cell * 0.5f to top + cell * 3.5f,
-            left + cell * 3.5f to top - cell * 0.5f,
-            left + cell * 3.5f to top + size + cell * 0.5f
-        )
-        for ((ox, oy) in outerOffsets) {
-            val px = ox.roundToInt()
-            val py = oy.roundToInt()
-            if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
-                val lum = pixelLum(bitmap.getPixel(px, py))
-                // Bingkai/latar di luar papan umumnya seragam; penalti ringan jika melenceng
-                if (lum in 175.0..235.0) totalScore -= 0.5
-            }
-        }
-
         return if (validNodes >= 34) totalScore else -1.0
     }
 
@@ -248,120 +423,10 @@ class BoardReader(private val context: Context) {
         val bl = pixelLum(bitmap.getPixel(x1, y2))
         val br = pixelLum(bitmap.getPixel(x2, y2))
 
-        // Pastikan sudut diagonal memiliki warna kotak yang konsisten
         if (abs(tl - br) > 35.0 || abs(tr - bl) > 35.0) return 0.0
-
         return ((tl + br) - (tr + bl)) * 0.5
     }
 
     private fun pixelLum(c: Int): Double =
         0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c)
-
-    private fun detectSquarePiece(
-        bitmap: Bitmap,
-        matrix: FloatArray,
-        row: Int,
-        col: Int
-    ): Char {
-        val gridSize = 14
-        val whiteMask = Array(gridSize) { BooleanArray(gridSize) }
-        val darkMask = Array(gridSize) { BooleanArray(gridSize) }
-
-        var neutralWhiteCount = 0
-        var darkOutlineCount = 0
-        var veryDarkCount = 0
-
-        for (gy in 0 until gridSize) {
-            val v = 0.16f + (gy.toFloat() / (gridSize - 1)) * 0.68f
-            for (gx in 0 until gridSize) {
-                val u = 0.16f + (gx.toFloat() / (gridSize - 1)) * 0.68f
-                val pt = Homography.transformPoint(matrix, PointF(col + u, row + v))
-                val px = pt.x.toInt()
-                val py = pt.y.toInt()
-
-                if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
-                    val c = bitmap.getPixel(px, py)
-                    val r = Color.red(c)
-                    val g = Color.green(c)
-                    val b = Color.blue(c)
-
-                    val lum = 0.299 * r + 0.587 * g + 0.114 * b
-                    val warmth = abs(r - b)
-
-                    // Bidak putih memiliki warna putih netral (warmth < 32), berbeda dengan kayu krem (warmth > 55)
-                    if (lum > 190.0 && warmth < 32) {
-                        neutralWhiteCount++
-                        whiteMask[gy][gx] = true
-                    }
-
-                    if (lum < 110.0) {
-                        darkOutlineCount++
-                        darkMask[gy][gx] = true
-                    }
-
-                    if (lum < 88.0) {
-                        veryDarkCount++
-                    }
-                }
-            }
-        }
-
-        val isWhitePiece = (neutralWhiteCount >= 9) && (darkOutlineCount >= 3 || neutralWhiteCount >= 14)
-        val isBlackPiece = !isWhitePiece && (veryDarkCount >= 15)
-
-        if (!isWhitePiece && !isBlackPiece) return '.'
-
-        val activeMask = if (isWhitePiece) whiteMask else darkMask
-        val pieceType = classifySilhouette(activeMask)
-        return if (isWhitePiece) pieceType.uppercaseChar() else pieceType.lowercaseChar()
-    }
-
-    private fun classifySilhouette(mask: Array<BooleanArray>): Char {
-        val size = mask.size
-        var minY = size
-        var maxY = -1
-        val rowWidths = IntArray(size)
-        val rowSegments = IntArray(size)
-
-        for (y in 0 until size) {
-            var count = 0
-            var segments = 0
-            var inSeg = false
-            for (x in 0 until size) {
-                if (mask[y][x]) {
-                    count++
-                    if (!inSeg) {
-                        segments++
-                        inSeg = true
-                    }
-                } else {
-                    inSeg = false
-                }
-            }
-            rowWidths[y] = count
-            rowSegments[y] = segments
-            if (count > 0) {
-                if (y < minY) minY = y
-                if (y > maxY) maxY = y
-            }
-        }
-
-        if (maxY < minY) return 'P'
-        val height = maxY - minY + 1
-        if (height <= 7) return 'P'
-
-        val topWidth = max(rowWidths[minY], rowWidths[(minY + 1).coerceAtMost(maxY)])
-        val midY = minY + height / 2
-        val midWidth = rowWidths[midY]
-        val maxSegmentsTop = max(rowSegments[minY], rowSegments[(minY + 1).coerceAtMost(maxY)])
-
-        return when {
-            maxSegmentsTop >= 2 && topWidth >= 5 -> 'Q'
-            topWidth >= 5 && height in 8..10 -> 'R'
-            height >= 11 && topWidth <= 4 -> 'K'
-            height >= 10 && midWidth >= 5 && topWidth <= 4 -> 'B'
-            midWidth >= 6 && topWidth in 3..5 -> 'N'
-            else -> 'P'
-        }
-    }
 }
