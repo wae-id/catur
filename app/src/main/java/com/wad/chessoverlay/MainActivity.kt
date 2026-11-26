@@ -118,16 +118,18 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        btnResetAuto = Button(this).apply {
-            text = "Reset ke Auto-Scan Otomatis"
+                btnResetAuto = Button(this).apply {
+            text = "Reset / Scan Ulang Posisi Papan"
             setOnClickListener {
                 getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
                     .edit()
                     .remove("calibration_points")
+                    .remove("auto_locked_points")
                     .apply()
-                statusText.text = "Status: Mode Auto-Scan Otomatis Diaktifkan"
+                statusText.text = "Status: Cache Papan Dihapus (Siap Scan Ulang)"
             }
         }
+
 
         btnStop = Button(this).apply {
             text = "Hentikan Capture"
