@@ -20,8 +20,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnOverlay: Button
     private lateinit var btnSide: Button
-    private lateinit var btnCalibrate: Button
     private lateinit var btnStart: Button
+    private lateinit var btnCalibrate: Button
+    private lateinit var btnResetAuto: Button
     private lateinit var btnStop: Button
     private lateinit var statusText: TextView
 
@@ -46,7 +47,7 @@ class MainActivity : AppCompatActivity() {
                 putExtra("IS_BLACK", isBlack)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
-            statusText.text = "Status: Aktif (${if (isBlack) "Hitam" else "Putih"})"
+            statusText.text = "Status: Auto-Scan Aktif (${if (isBlack) "Hitam" else "Putih"})"
         } else {
             statusText.text = "Status: Izin rekam layar dibatalkan"
         }
@@ -63,7 +64,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         statusText = TextView(this).apply {
-            text = "Status: Siap"
+            text = "Status: Siap (Mode Auto-Scan Papan)"
             textSize = 18f
             setPadding(0, 0, 0, 40)
         }
@@ -91,22 +92,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        btnCalibrate = Button(this).apply {
-            text = "3. Kalibrasi Papan (4 Titik)"
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
-            }
-        }
-
         btnStart = Button(this).apply {
-            text = "4. Mulai Capture Layar"
+            text = "3. Mulai Capture (Auto-Scan)"
             setOnClickListener {
                 if (!Settings.canDrawOverlays(this@MainActivity)) {
                     statusText.text = "Error: Izinkan Overlay (No. 1) dulu!"
-                    return@setOnClickListener
-                }
-                if (!hasCalibration()) {
-                    statusText.text = "Error: Lakukan Kalibrasi (No. 3) dulu!"
                     return@setOnClickListener
                 }
                 val projectionManager =
@@ -115,8 +105,26 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        btnCalibrate = Button(this).apply {
+            text = "Kalibrasi Manual (Opsional)"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
+            }
+        }
+
+        btnResetAuto = Button(this).apply {
+            text = "Reset ke Auto-Scan Otomatis"
+            setOnClickListener {
+                getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
+                    .edit()
+                    .remove("calibration_points")
+                    .apply()
+                statusText.text = "Status: Mode Auto-Scan Otomatis Diaktifkan"
+            }
+        }
+
         btnStop = Button(this).apply {
-            text = "5. Hentikan Capture"
+            text = "Hentikan Capture"
             setOnClickListener {
                 val stopIntent = Intent(this@MainActivity, ScreenCaptureService::class.java).apply {
                     action = ScreenCaptureService.ACTION_STOP
@@ -129,15 +137,11 @@ class MainActivity : AppCompatActivity() {
         layout.addView(statusText)
         layout.addView(btnOverlay)
         layout.addView(btnSide)
-        layout.addView(btnCalibrate)
         layout.addView(btnStart)
+        layout.addView(btnCalibrate)
+        layout.addView(btnResetAuto)
         layout.addView(btnStop)
         setContentView(layout)
-    }
-
-    private fun hasCalibration(): Boolean {
-        val prefs = getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
-        return !prefs.getString("calibration_points", null).isNullOrEmpty()
     }
 
     private fun requestNotificationPermissionIfNeeded() {
