@@ -117,7 +117,7 @@ class ChessLogic {
             }
 
             desyncFrames++
-            if (desyncFrames >= 6) {
+            if (desyncFrames >= 18) {
                 desyncFrames = 0
                 syncFromClassifiedBoard(oriented)
                 hasTrackedGame = true
