@@ -153,15 +153,15 @@ class ScreenCaptureService : Service() {
                         val side = if (boardReader.isUserPlayingBlack) "Hitam" else "Putih"
                         val status = when {
                             engine.errorMsg.isNotEmpty() -> engine.errorMsg
+                            boardReader.detectedPoints == null -> "Mencari papan..."
                             isEngineBusy.get() -> "Menghitung..."
-                            else -> "Aktif"
+                            else -> "Auto-Scan Aktif"
                         }
                         overlayView?.fpsText = "FPS: $fps | $side ($status)"
                         overlayView?.invalidate()
                     }
                 }
 
-                // Pindai papan setiap 250ms agar stabilitas 2-frame tercapai dalam 0.5 detik
                 if (currentTime - lastProcessTime >= 250) {
                     lastProcessTime = currentTime
                     processBoardImage(image, width, height)
@@ -184,12 +184,10 @@ class ScreenCaptureService : Service() {
     }
 
     private fun processBoardImage(image: Image, width: Int, height: Int) {
-        if (!boardReader.isBoardReady()) return
-
         val bitmap = imageToBitmap(image, width, height) ?: return
         try {
             val fen = boardReader.scanFullBoard(bitmap)
-            val currentPoints = boardReader.loadCalibration()
+            val currentPoints = boardReader.detectedPoints
 
             Handler(mainLooper).post {
                 overlayView?.points = currentPoints
@@ -273,7 +271,7 @@ class ScreenCaptureService : Service() {
         }
 
         overlayView = OverlayCanvasView(this).apply {
-            points = boardReader.loadCalibration()
+            points = boardReader.detectedPoints
             isFlipped = boardReader.isUserPlayingBlack
         }
 
@@ -294,7 +292,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Menganalisis papan catur secara real-time")
+            .setContentText("Auto-Scan papan catur aktif")
             .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
