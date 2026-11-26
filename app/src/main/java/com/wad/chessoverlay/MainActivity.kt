@@ -21,8 +21,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnOverlay: Button
     private lateinit var btnSide: Button
     private lateinit var btnStart: Button
-    private lateinit var btnCalibrate: Button
-    private lateinit var btnResetAuto: Button
     private lateinit var btnStop: Button
     private lateinit var statusText: TextView
 
@@ -49,7 +47,7 @@ class MainActivity : AppCompatActivity() {
                 putExtra(ScreenCaptureService.EXTRA_SIDE_MODE, selectedMode)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
-            statusText.text = "Status: Aktif (Mode Sisi: $selectedMode)"
+            statusText.text = "Status: Aktif (Auto-Scan Otomatis)"
         } else {
             statusText.text = "Status: Izin rekam layar dibatalkan"
         }
@@ -57,6 +55,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Pastikan tidak ada koordinat papan lama yang tersisa
+        getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
+            .edit()
+            .remove("calibration_points")
+            .remove("auto_locked_points")
+            .apply()
 
         requestNotificationPermissionIfNeeded()
 
@@ -66,7 +71,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         statusText = TextView(this).apply {
-            text = "Status: Siap (Auto-Scan Papan & Sisi)"
+            text = "Status: Siap (100% Otomatis Tanpa Atur Posisi)"
             textSize = 18f
             setPadding(0, 0, 0, 40)
         }
@@ -99,7 +104,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnStart = Button(this).apply {
-            text = "3. Mulai Capture (Auto-Scan)"
+            text = "3. Mulai Capture"
             setOnClickListener {
                 if (!Settings.canDrawOverlays(this@MainActivity)) {
                     statusText.text = "Error: Izinkan Overlay (No. 1) dulu!"
@@ -110,26 +115,6 @@ class MainActivity : AppCompatActivity() {
                 mediaProjectionLauncher.launch(projectionManager.createScreenCaptureIntent())
             }
         }
-
-        btnCalibrate = Button(this).apply {
-            text = "Kalibrasi Manual (Opsional)"
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, CalibrationActivity::class.java))
-            }
-        }
-
-                btnResetAuto = Button(this).apply {
-            text = "Reset / Scan Ulang Posisi Papan"
-            setOnClickListener {
-                getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
-                    .edit()
-                    .remove("calibration_points")
-                    .remove("auto_locked_points")
-                    .apply()
-                statusText.text = "Status: Cache Papan Dihapus (Siap Scan Ulang)"
-            }
-        }
-
 
         btnStop = Button(this).apply {
             text = "Hentikan Capture"
@@ -146,8 +131,6 @@ class MainActivity : AppCompatActivity() {
         layout.addView(btnOverlay)
         layout.addView(btnSide)
         layout.addView(btnStart)
-        layout.addView(btnCalibrate)
-        layout.addView(btnResetAuto)
         layout.addView(btnStop)
         setContentView(layout)
     }
