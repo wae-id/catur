@@ -58,6 +58,22 @@ class BoardReader(private val context: Context) {
             return ""
         }
 
+        // Cek apakah papan tertutup popup/dialog (misal "Putih Menang" / menu)
+        val l = points[0].x
+        val t = points[0].y
+        val boardSize = points[1].x - points[0].x
+        if (boardSize > 100f && !isBoardUnobstructed(screenBitmap, l, t, boardSize)) {
+            missedBoardFrames++
+            if (missedBoardFrames >= 16 && loadManualCalibration() == null) {
+                val newPoints = autoDetectBoard(screenBitmap)
+                if (newPoints != null) detectedPoints = newPoints
+                missedBoardFrames = 0
+            }
+            statusNote = "Papan tertutup..."
+            return ""
+        }
+        missedBoardFrames = 0
+
         val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
         val matrix = Homography.getPerspectiveTransform(src, points)
 
@@ -75,17 +91,11 @@ class BoardReader(private val context: Context) {
         }
 
         if (pieceCount < 2) {
-            missedBoardFrames++
-            if (missedBoardFrames >= 4) {
-                detectedPoints = autoDetectBoard(screenBitmap)
-                missedBoardFrames = 0
-            }
             statusNote = "Mencari papan..."
             return ""
         }
-        missedBoardFrames = 0
 
-        // Deteksi otomatis apakah pengguna bermain sebagai Putih atau Hitam
+        // Deteksi otomatis warna bidak pengguna (Putih vs Hitam)
         if (autoDetectSide) {
             val detectedBlackSide = detectSideAutomatically(detectedBoard)
             if (detectedBlackSide != null && detectedBlackSide != isUserPlayingBlack) {
@@ -94,10 +104,19 @@ class BoardReader(private val context: Context) {
             }
         }
 
-        // Deteksi giliran dari 2 kotak sorotan kuning langkah terakhir
         val detectedTurnFromHighlight = inferTurnFromHighlights(detectedBoard, highlightedSquares)
 
-        chessLogic.updateFromScan(detectedBoard, isUserPlayingBlack, detectedTurnFromHighlight)
+        // Konversi koordinat sorotan kuning ke orientasi papan catur standar
+        val orientedHighlights = highlightedSquares.map { (r, c) ->
+            if (isUserPlayingBlack) (7 - r) to (7 - c) else r to c
+        }.toSet()
+
+        chessLogic.updateFromScan(
+            detectedBoard,
+            isUserPlayingBlack,
+            detectedTurnFromHighlight,
+            orientedHighlights
+        )
 
         val myTurn = if (isUserPlayingBlack) "b" else "w"
         val activeTurn = detectedTurnFromHighlight ?: chessLogic.currentTurn
@@ -112,10 +131,27 @@ class BoardReader(private val context: Context) {
     }
 
     /**
-     * Menentukan orientasi papan secara otomatis:
-     * - Jika bidak Putih di baris atas (0..1) dan Hitam di bawah (6..7) -> true (User Hitam)
-     * - Jika bidak Hitam di baris atas (0..1) dan Putih di bawah (6..7) -> false (User Putih)
+     * Memastikan 49 titik pertemuan kotak di dalam papan masih memiliki pola terang-gelap catur
+     * dan tidak tertutup jendela dialog/popup.
      */
+    private fun isBoardUnobstructed(bitmap: Bitmap, left: Float, top: Float, size: Float): Boolean {
+        val cell = size / 8f
+        val d = (cell * 0.14f).coerceAtLeast(3f)
+        var validNodes = 0
+
+        for (row in 1..7) {
+            for (col in 1..7) {
+                val ix = left + col * cell
+                val iy = top + row * cell
+                val diff = abs(cornerContrast(bitmap, ix, iy, d))
+                if (diff > 14.0) {
+                    validNodes++
+                }
+            }
+        }
+        return validNodes >= 28
+    }
+
     private fun detectSideAutomatically(rawBoard: Array<CharArray>): Boolean? {
         var topWhite = 0
         var topBlack = 0
