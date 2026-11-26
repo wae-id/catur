@@ -152,17 +152,17 @@ class ScreenCaptureService : Service() {
                     Handler(mainLooper).post {
                         val side = if (boardReader.isUserPlayingBlack) "Hitam" else "Putih"
                         val status = when {
+                            boardReader.statusNote.isNotEmpty() -> boardReader.statusNote
                             engine.errorMsg.isNotEmpty() -> engine.errorMsg
-                            boardReader.detectedPoints == null -> "Mencari papan..."
                             isEngineBusy.get() -> "Menghitung..."
-                            else -> "Auto-Scan Aktif"
+                            else -> "Siap"
                         }
                         overlayView?.fpsText = "FPS: $fps | $side ($status)"
                         overlayView?.invalidate()
                     }
                 }
 
-                if (currentTime - lastProcessTime >= 250) {
+                if (currentTime - lastProcessTime >= 220) {
                     lastProcessTime = currentTime
                     processBoardImage(image, width, height)
                 }
@@ -189,13 +189,28 @@ class ScreenCaptureService : Service() {
             val fen = boardReader.scanFullBoard(bitmap)
             val currentPoints = boardReader.detectedPoints
 
+            if (fen.isEmpty()) {
+                // Jika sedang giliran lawan atau papan belum stabil, sembunyikan panah lama
+                if (boardReader.statusNote == "Menunggu lawan...") {
+                    lastSolvedFen = ""
+                    currentBestMove = ""
+                }
+                Handler(mainLooper).post {
+                    overlayView?.points = currentPoints
+                    overlayView?.isFlipped = boardReader.isUserPlayingBlack
+                    overlayView?.bestMove = currentBestMove
+                    overlayView?.invalidate()
+                }
+                return
+            }
+
             Handler(mainLooper).post {
                 overlayView?.points = currentPoints
                 overlayView?.isFlipped = boardReader.isUserPlayingBlack
                 overlayView?.invalidate()
             }
 
-            if (fen.isNotEmpty() && fen != lastSolvedFen && isEngineBusy.compareAndSet(false, true)) {
+            if (fen != lastSolvedFen && isEngineBusy.compareAndSet(false, true)) {
                 engineExecutor.execute {
                     try {
                         val move = engine.getBestMove(fen)
