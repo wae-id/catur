@@ -1,12 +1,11 @@
 package com.wad.chessoverlay
 
-import kotlin.math.abs
-
 class ChessLogic {
     val board = Array(8) { CharArray(8) { '.' } }
     private var hasTrackedGame = false
     private var stableCandidate: Array<CharArray>? = null
     private var stableStreak = 0
+    private var desyncFrames = 0
 
     fun reset() {
         for (r in 0..7) {
@@ -17,6 +16,7 @@ class ChessLogic {
         hasTrackedGame = false
         stableCandidate = null
         stableStreak = 0
+        desyncFrames = 0
     }
 
     fun updateFromScan(screenBoard: Array<CharArray>, isFlipped: Boolean) {
@@ -31,7 +31,6 @@ class ChessLogic {
             }
         }
 
-        // Pastikan tampilan papan stabil minimal 2 frame berturut-turut (abaikan animasi geser)
         val prev = stableCandidate
         if (prev != null && sameOccupancy(prev, oriented)) {
             stableStreak++
@@ -41,37 +40,40 @@ class ChessLogic {
         }
         if (stableStreak < 2 && !isBoardEmpty()) return
 
-        // Jika papan kembali ke posisi awal permainan, muat ulang 32 bidak standar
         if (isStartingPosition(oriented)) {
             setStandardStartingBoard()
             hasTrackedGame = true
+            desyncFrames = 0
             return
         }
 
         if (hasTrackedGame) {
-            // Jika tidak ada perubahan warna/posisi petak, lewati
-            if (sameOccupancy(board, oriented)) return
+            if (sameOccupancy(board, oriented)) {
+                desyncFrames = 0
+                return
+            }
 
             val mySide = if (isFlipped) -1 else 1
             val oppSide = -mySide
 
-            // 1. Coba cocokkan 1 langkah legal (lawan baru jalan atau kita baru jalan)
             val onePly = findBestLegalSequence(board, oriented, listOf(oppSide, mySide), maxDepth = 1)
             if (onePly != null) {
                 copyInto(onePly, board)
+                desyncFrames = 0
                 return
             }
 
-            // 2. Coba cocokkan 2 langkah legal beruntun (kita jalan + Computer langsung balas)
             val twoPly = findBestLegalSequence(board, oriented, listOf(mySide, oppSide), maxDepth = 2)
             if (twoPly != null) {
                 copyInto(twoPly, board)
+                desyncFrames = 0
                 return
             }
 
-            // 3. Jika terjadi lompatan jauh (misal muat ulang game di tengah jalan), sinkronisasi ulang
-            if (countOccupancyDiff(board, oriented) >= 6) {
+            desyncFrames++
+            if (desyncFrames >= 4) {
                 hasTrackedGame = false
+                desyncFrames = 0
                 syncFromClassifiedBoard(oriented)
             }
         } else {
@@ -139,8 +141,7 @@ class ChessLogic {
             }
         }
 
-        // Terima hasil jika minimal 63 dari 64 petak cocok warna & isinya
-        return if (bestScore >= 63) bestBoard else null
+        return if (bestScore >= 62) bestBoard else null
     }
 
     private fun matchScore(candidate: Array<CharArray>, scan: Array<CharArray>): Int {
@@ -239,7 +240,6 @@ class ChessLogic {
                                 }
                             }
                         }
-                        // Rokade standar (King di kolom 4)
                         val homeRow = if (isWhite) 7 else 0
                         val rookChar = if (isWhite) 'R' else 'r'
                         if (r == homeRow && c == 4 && !isKingInCheck(b, side)) {
@@ -302,7 +302,6 @@ class ChessLogic {
         if (kr == -1) return true
 
         val opp = -side
-        // Serangan pion lawan
         val pawnRow = if (side == 1) kr - 1 else kr + 1
         val oppPawn = if (side == 1) 'p' else 'P'
         if (pawnRow in 0..7) {
@@ -311,7 +310,6 @@ class ChessLogic {
             ) return true
         }
 
-        // Serangan kuda lawan
         val oppKnight = if (side == 1) 'n' else 'N'
         val jumps = arrayOf(-2 to -1, -2 to 1, -1 to -2, -1 to 2, 1 to -2, 1 to 2, 2 to -1, 2 to 1)
         for ((dr, dc) in jumps) {
@@ -320,7 +318,6 @@ class ChessLogic {
             if (nr in 0..7 && nc in 0..7 && b[nr][nc] == oppKnight) return true
         }
 
-        // Serangan raja lawan
         val oppKing = if (side == 1) 'k' else 'K'
         for (dr in -1..1) {
             for (dc in -1..1) {
@@ -331,7 +328,6 @@ class ChessLogic {
             }
         }
 
-        // Serangan garis lurus & diagonal (Benteng, Gajah, Menteri)
         val straight = arrayOf(-1 to 0, 1 to 0, 0 to -1, 0 to 1)
         for ((dr, dc) in straight) {
             var nr = kr + dr
@@ -394,14 +390,12 @@ class ChessLogic {
         val isWhite = kingChar.isUpperCase()
         val mySide = if (isWhite) 1 else -1
 
-        // Prioritaskan bidak milik sendiri yang berada di baris belakang (row 7 / row 0)
         for (c in intArrayOf(4, 5, 3, 6, 2, 1, 7, 0)) {
             if (pieceColor(board[preferredRow][c]) == mySide) {
                 board[preferredRow][c] = kingChar
                 return
             }
         }
-        // Cari bidak milik sendiri di baris mana pun
         for (r in 7 downTo 0) {
             val row = if (isWhite) r else 7 - r
             for (c in 0..7) {
@@ -415,6 +409,18 @@ class ChessLogic {
     }
 
     fun toFEN(turn: String = "w"): String {
+        val turnSide = if (turn == "w") 1 else -1
+
+        // Tolak papan jika Raja lawan sedang dalam posisi skak (ilegal di aturan UCI Stockfish)
+        if (isKingInCheck(board, -turnSide)) return ""
+
+        var wKings = 0
+        var bKings = 0
+        var wPawns = 0
+        var bPawns = 0
+        var wTotal = 0
+        var bTotal = 0
+
         val sb = StringBuilder()
         for (r in 0..7) {
             var emptyCount = 0
@@ -423,6 +429,19 @@ class ChessLogic {
                 if (piece == '.') {
                     emptyCount++
                 } else {
+                    if (piece.isUpperCase()) wTotal++ else bTotal++
+                    when (piece) {
+                        'K' -> wKings++
+                        'k' -> bKings++
+                        'P' -> {
+                            if (r == 0 || r == 7) return ""
+                            wPawns++
+                        }
+                        'p' -> {
+                            if (r == 0 || r == 7) return ""
+                            bPawns++
+                        }
+                    }
                     if (emptyCount > 0) {
                         sb.append(emptyCount)
                         emptyCount = 0
@@ -433,6 +452,11 @@ class ChessLogic {
             if (emptyCount > 0) sb.append(emptyCount)
             if (r < 7) sb.append("/")
         }
+
+        if (wKings != 1 || bKings != 1 || wPawns > 8 || bPawns > 8 || wTotal > 16 || bTotal > 16) {
+            return ""
+        }
+
         return "$sb $turn - - 0 1"
     }
 
@@ -449,16 +473,6 @@ class ChessLogic {
             }
         }
         return true
-    }
-
-    private fun countOccupancyDiff(a: Array<CharArray>, b: Array<CharArray>): Int {
-        var diff = 0
-        for (r in 0..7) {
-            for (c in 0..7) {
-                if (pieceColor(a[r][c]) != pieceColor(b[r][c])) diff++
-            }
-        }
-        return diff
     }
 
     private fun isBoardEmpty(): Boolean {
