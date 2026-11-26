@@ -16,7 +16,7 @@ import kotlin.math.sin
 class OverlayCanvasView(context: Context) : View(context) {
 
     private val textPaint = Paint().apply {
-        color = Color.GREEN
+        color = Color.parseColor("#00E676")
         textSize = 31f
         isAntiAlias = true
     }
@@ -28,11 +28,11 @@ class OverlayCanvasView(context: Context) : View(context) {
     }
 
     private val bgPaint = Paint().apply {
-        color = Color.parseColor("#CC000000")
+        color = Color.parseColor("#EB0D1117")
     }
 
     private val arrowPaint = Paint().apply {
-        color = Color.argb(225, 0, 230, 118)
+        color = Color.argb(230, 0, 230, 118)
         strokeWidth = 14f
         strokeCap = Paint.Cap.ROUND
         style = Paint.Style.STROKE
@@ -40,7 +40,7 @@ class OverlayCanvasView(context: Context) : View(context) {
     }
 
     private val headPaint = Paint().apply {
-        color = Color.argb(240, 0, 230, 118)
+        color = Color.argb(245, 0, 230, 118)
         style = Paint.Style.FILL
         isAntiAlias = true
     }
