@@ -47,6 +47,7 @@ class ScreenCaptureService : Service() {
     private var lastSolvedFen = ""
     private var currentBestMove = ""
     private var currentEval = ""
+    private var clearArrowStreak = 0
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -112,6 +113,7 @@ class ScreenCaptureService : Service() {
             lastSolvedFen = ""
             currentBestMove = ""
             currentEval = ""
+            clearArrowStreak = 0
 
             if (dataIntent != null && resultCode == Activity.RESULT_OK) {
                 val projectionManager =
@@ -173,6 +175,7 @@ class ScreenCaptureService : Service() {
                             boardReader.statusNote.isNotEmpty() -> boardReader.statusNote
                             engine.errorMsg.isNotEmpty() -> engine.errorMsg
                             isEngineBusy.get() -> "Menghitung..."
+                            currentBestMove.isNotEmpty() -> "Terkunci"
                             else -> "Siap"
                         }
                         overlayView?.fpsText = "FPS: $fps | $sideLabel ($status)"
@@ -212,9 +215,13 @@ class ScreenCaptureService : Service() {
                 if (boardReader.statusNote == "Menunggu lawan..." ||
                     boardReader.statusNote == "Papan tertutup..."
                 ) {
-                    lastSolvedFen = ""
-                    currentBestMove = ""
-                    currentEval = ""
+                    clearArrowStreak++
+                    // Hanya hapus panah setelah 3 frame berturut-turut terkonfirmasi giliran lawan/popup
+                    if (clearArrowStreak >= 3) {
+                        lastSolvedFen = ""
+                        currentBestMove = ""
+                        currentEval = ""
+                    }
                 }
                 Handler(mainLooper).post {
                     overlayView?.points = currentPoints
@@ -226,18 +233,22 @@ class ScreenCaptureService : Service() {
                 return
             }
 
+            clearArrowStreak = 0
+
             Handler(mainLooper).post {
                 overlayView?.points = currentPoints
                 overlayView?.isFlipped = boardReader.isUserPlayingBlack
                 overlayView?.invalidate()
             }
 
+            // Hanya jalankan Stockfish jika posisi FEN benar-benar baru
             if (fen != lastSolvedFen && isEngineBusy.compareAndSet(false, true)) {
+                val targetFen = fen
                 engineExecutor.execute {
                     try {
-                        val (move, eval) = engine.getBestMoveWithEval(fen)
+                        val (move, eval) = engine.getBestMoveWithEval(targetFen)
                         if (move.isNotEmpty()) {
-                            lastSolvedFen = fen
+                            lastSolvedFen = targetFen
                             currentBestMove = move
                             currentEval = eval
                             Handler(mainLooper).post {
@@ -331,7 +342,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Stockfish Pro + Auto-Scan aktif")
+            .setContentText("Stockfish Pro + Auto-Lock Papan aktif")
             .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
