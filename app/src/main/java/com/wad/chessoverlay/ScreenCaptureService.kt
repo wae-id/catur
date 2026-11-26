@@ -52,6 +52,7 @@ class ScreenCaptureService : Service() {
         const val ACTION_STOP = "ACTION_STOP"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA_INTENT = "EXTRA_DATA_INTENT"
+        const val EXTRA_SIDE_MODE = "EXTRA_SIDE_MODE" // "AUTO", "WHITE", "BLACK"
         private const val CHANNEL_ID = "ChessOverlayChannel"
         private const val NOTIF_ID = 1
     }
@@ -90,8 +91,22 @@ class ScreenCaptureService : Service() {
                 intent.getParcelableExtra(EXTRA_DATA_INTENT)
             }
 
-            val isBlack = intent.getBooleanExtra("IS_BLACK", false)
-            boardReader.isUserPlayingBlack = isBlack
+            val sideMode = intent.getStringExtra(EXTRA_SIDE_MODE) ?: "AUTO"
+            when (sideMode) {
+                "BLACK" -> {
+                    boardReader.autoDetectSide = false
+                    boardReader.isUserPlayingBlack = true
+                }
+                "WHITE" -> {
+                    boardReader.autoDetectSide = false
+                    boardReader.isUserPlayingBlack = false
+                }
+                else -> {
+                    boardReader.autoDetectSide = true
+                    boardReader.isUserPlayingBlack = false
+                }
+            }
+
             boardReader.resetGame()
             lastSolvedFen = ""
             currentBestMove = ""
@@ -150,14 +165,15 @@ class ScreenCaptureService : Service() {
                     lastFpsTime = currentTime
 
                     Handler(mainLooper).post {
-                        val side = if (boardReader.isUserPlayingBlack) "Hitam" else "Putih"
+                        val colorName = if (boardReader.isUserPlayingBlack) "Hitam" else "Putih"
+                        val sideLabel = if (boardReader.autoDetectSide) "Auto: $colorName" else colorName
                         val status = when {
                             boardReader.statusNote.isNotEmpty() -> boardReader.statusNote
                             engine.errorMsg.isNotEmpty() -> engine.errorMsg
                             isEngineBusy.get() -> "Menghitung..."
                             else -> "Siap"
                         }
-                        overlayView?.fpsText = "FPS: $fps | $side ($status)"
+                        overlayView?.fpsText = "FPS: $fps | $sideLabel ($status)"
                         overlayView?.invalidate()
                     }
                 }
@@ -190,7 +206,6 @@ class ScreenCaptureService : Service() {
             val currentPoints = boardReader.detectedPoints
 
             if (fen.isEmpty()) {
-                // Jika sedang giliran lawan atau papan belum stabil, sembunyikan panah lama
                 if (boardReader.statusNote == "Menunggu lawan...") {
                     lastSolvedFen = ""
                     currentBestMove = ""
@@ -307,7 +322,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Auto-Scan papan catur aktif")
+            .setContentText("Auto-Scan papan & sisi aktif")
             .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
