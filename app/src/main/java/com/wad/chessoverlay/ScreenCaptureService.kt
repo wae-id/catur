@@ -46,13 +46,14 @@ class ScreenCaptureService : Service() {
     private var lastProcessTime = 0L
     private var lastSolvedFen = ""
     private var currentBestMove = ""
+    private var currentEval = ""
 
     companion object {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA_INTENT = "EXTRA_DATA_INTENT"
-        const val EXTRA_SIDE_MODE = "EXTRA_SIDE_MODE" // "AUTO", "WHITE", "BLACK"
+        const val EXTRA_SIDE_MODE = "EXTRA_SIDE_MODE"
         private const val CHANNEL_ID = "ChessOverlayChannel"
         private const val NOTIF_ID = 1
     }
@@ -110,6 +111,7 @@ class ScreenCaptureService : Service() {
             boardReader.resetGame()
             lastSolvedFen = ""
             currentBestMove = ""
+            currentEval = ""
 
             if (dataIntent != null && resultCode == Activity.RESULT_OK) {
                 val projectionManager =
@@ -174,6 +176,7 @@ class ScreenCaptureService : Service() {
                             else -> "Siap"
                         }
                         overlayView?.fpsText = "FPS: $fps | $sideLabel ($status)"
+                        overlayView?.evalText = currentEval
                         overlayView?.invalidate()
                     }
                 }
@@ -206,14 +209,18 @@ class ScreenCaptureService : Service() {
             val currentPoints = boardReader.detectedPoints
 
             if (fen.isEmpty()) {
-                if (boardReader.statusNote == "Menunggu lawan...") {
+                if (boardReader.statusNote == "Menunggu lawan..." ||
+                    boardReader.statusNote == "Papan tertutup..."
+                ) {
                     lastSolvedFen = ""
                     currentBestMove = ""
+                    currentEval = ""
                 }
                 Handler(mainLooper).post {
                     overlayView?.points = currentPoints
                     overlayView?.isFlipped = boardReader.isUserPlayingBlack
                     overlayView?.bestMove = currentBestMove
+                    overlayView?.evalText = currentEval
                     overlayView?.invalidate()
                 }
                 return
@@ -228,12 +235,14 @@ class ScreenCaptureService : Service() {
             if (fen != lastSolvedFen && isEngineBusy.compareAndSet(false, true)) {
                 engineExecutor.execute {
                     try {
-                        val move = engine.getBestMove(fen)
+                        val (move, eval) = engine.getBestMoveWithEval(fen)
                         if (move.isNotEmpty()) {
                             lastSolvedFen = fen
                             currentBestMove = move
+                            currentEval = eval
                             Handler(mainLooper).post {
                                 overlayView?.bestMove = currentBestMove
+                                overlayView?.evalText = currentEval
                                 overlayView?.invalidate()
                             }
                         }
@@ -322,7 +331,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Auto-Scan papan & sisi aktif")
+            .setContentText("Stockfish Pro + Auto-Scan aktif")
             .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
