@@ -26,7 +26,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStop: Button
     private lateinit var statusText: TextView
 
-    private var isBlack = false
+    private val sideModes = arrayOf("AUTO", "WHITE", "BLACK")
+    private var sideModeIndex = 0
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -40,14 +41,15 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
+            val selectedMode = sideModes[sideModeIndex]
             val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
                 action = ScreenCaptureService.ACTION_START
                 putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                 putExtra(ScreenCaptureService.EXTRA_DATA_INTENT, result.data)
-                putExtra("IS_BLACK", isBlack)
+                putExtra(ScreenCaptureService.EXTRA_SIDE_MODE, selectedMode)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
-            statusText.text = "Status: Auto-Scan Aktif (${if (isBlack) "Hitam" else "Putih"})"
+            statusText.text = "Status: Aktif (Mode Sisi: $selectedMode)"
         } else {
             statusText.text = "Status: Izin rekam layar dibatalkan"
         }
@@ -64,7 +66,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         statusText = TextView(this).apply {
-            text = "Status: Siap (Mode Auto-Scan Papan)"
+            text = "Status: Siap (Auto-Scan Papan & Sisi)"
             textSize = 18f
             setPadding(0, 0, 0, 40)
         }
@@ -85,10 +87,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSide = Button(this).apply {
-            text = "2. Main Sebagai: PUTIH"
+            text = "2. Warna Bidak: OTOMATIS (Putih/Hitam)"
             setOnClickListener {
-                isBlack = !isBlack
-                text = if (isBlack) "2. Main Sebagai: HITAM" else "2. Main Sebagai: PUTIH"
+                sideModeIndex = (sideModeIndex + 1) % sideModes.size
+                text = when (sideModes[sideModeIndex]) {
+                    "AUTO" -> "2. Warna Bidak: OTOMATIS (Putih/Hitam)"
+                    "WHITE" -> "2. Warna Bidak: KUNCI PUTIH"
+                    else -> "2. Warna Bidak: KUNCI HITAM"
+                }
             }
         }
 
