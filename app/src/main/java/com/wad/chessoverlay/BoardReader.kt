@@ -7,7 +7,6 @@ import android.graphics.PointF
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 class BoardReader(private val context: Context) {
@@ -60,7 +59,6 @@ class BoardReader(private val context: Context) {
     }
 
     fun scanFullBoard(screenBitmap: Bitmap): String {
-        // 1. Cari posisi papan hanya jika belum terkunci
         if (detectedPoints == null) {
             val found = autoDetectBoard(screenBitmap)
             if (found != null) {
@@ -78,7 +76,6 @@ class BoardReader(private val context: Context) {
         val t = points[0].y
         val boardSize = points[1].x - points[0].x
 
-        // 2. Cek apakah tengah papan tertutup dialog/popup gelap (misal popup "Putih Menang")
         if (boardSize > 100f && isPopupCoveringBoard(screenBitmap, l, t, boardSize)) {
             statusNote = "Papan tertutup..."
             return ""
@@ -127,7 +124,7 @@ class BoardReader(private val context: Context) {
         )
 
         val myTurn = if (isUserPlayingBlack) "b" else "w"
-        val activeTurn = detectedTurnFromHighlight ?: chessLogic.currentTurn
+        val activeTurn = chessLogic.currentTurn
 
         if (activeTurn != myTurn) {
             statusNote = "Menunggu lawan..."
@@ -138,10 +135,6 @@ class BoardReader(private val context: Context) {
         return chessLogic.toFEN(myTurn)
     }
 
-    /**
-     * Mendeteksi popup modal (latar biru gelap/abu gelap seragam di tengah papan).
-     * Petak papan catur normal selalu berwarna hangat (R >= B), bukan biru gelap.
-     */
     private fun isPopupCoveringBoard(bitmap: Bitmap, left: Float, top: Float, size: Float): Boolean {
         val cell = size / 8f
         var modalHits = 0
@@ -157,7 +150,6 @@ class BoardReader(private val context: Context) {
                     val blue = Color.blue(pixel)
                     val lum = 0.299 * red + 0.587 * green + 0.114 * blue
 
-                    // Latar dialog/modal memiliki komponen biru dominan (blue > red + 10) dan gelap
                     if (blue > red + 10 && lum < 125.0) {
                         modalHits++
                     }
@@ -224,38 +216,34 @@ class BoardReader(private val context: Context) {
         row: Int,
         col: Int
     ): Pair<Char, Boolean> {
-        val cornerOffsets = arrayOf(
-            0.09f to 0.09f,
-            0.91f to 0.09f,
-            0.09f to 0.91f,
-            0.91f to 0.91f
+        // Sampel 6 titik aman di bagian dalam tepi petak (bebas dari bidak tengah & bingkai luar)
+        val bgOffsets = arrayOf(
+            0.15f to 0.15f,
+            0.85f to 0.15f,
+            0.14f to 0.45f,
+            0.86f to 0.45f,
+            0.15f to 0.85f,
+            0.85f to 0.85f
         )
-        var bgR = 0.0
-        var bgG = 0.0
-        var bgB = 0.0
-        var bgCount = 0
+        var yellowHits = 0
 
-        for ((ox, oy) in cornerOffsets) {
+        for ((ox, oy) in bgOffsets) {
             val pt = Homography.transformPoint(matrix, PointF(col + ox, row + oy))
             val px = pt.x.toInt()
             val py = pt.y.toInt()
             if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
                 val c = bitmap.getPixel(px, py)
-                bgR += Color.red(c)
-                bgG += Color.green(c)
-                bgB += Color.blue(c)
-                bgCount++
+                val r = Color.red(c)
+                val g = Color.green(c)
+                val b = Color.blue(c)
+                val yellowScore = ((r + g) * 0.5) - b
+                // Mendeteksi sorotan kuning baik pada petak terang maupun petak gelap
+                if (yellowScore > 74.0 && r > 152 && g > 138) {
+                    yellowHits++
+                }
             }
         }
-
-        var isHighlighted = false
-        if (bgCount > 0) {
-            bgR /= bgCount
-            bgG /= bgCount
-            bgB /= bgCount
-            val yellowScore = ((bgR + bgG) * 0.5) - bgB
-            isHighlighted = yellowScore > 88.0 && bgR > 165.0 && bgG > 155.0
-        }
+        val isHighlighted = yellowHits >= 3
 
         val gridSize = 24
         val whiteMask = Array(gridSize) { BooleanArray(gridSize) }
@@ -299,8 +287,15 @@ class BoardReader(private val context: Context) {
             }
         }
 
-        val isWhitePiece = (neutralWhiteCount >= 26) && (darkOutlineCount >= 8 || neutralWhiteCount >= 42)
-        val isBlackPiece = !isWhitePiece && (veryDarkCount >= 44)
+        // Bidak Putih wajib memiliki area putih lebih dominan daripada isi gelap
+        val isWhitePiece = (neutralWhiteCount >= 28) &&
+            (neutralWhiteCount > veryDarkCount) &&
+            (darkOutlineCount >= 8 || neutralWhiteCount >= 45)
+
+        // Bidak Hitam memiliki isi gelap dominan (tidak terpengaruh garis kilau putih di mahkota)
+        val isBlackPiece = !isWhitePiece &&
+            (veryDarkCount >= 46) &&
+            (veryDarkCount > neutralWhiteCount)
 
         if (!isWhitePiece && !isBlackPiece) return '.' to isHighlighted
 
@@ -377,9 +372,9 @@ class BoardReader(private val context: Context) {
         val h = bitmap.height
         if (w < 300 || h < 400) return null
 
-        val minSize = (w * 0.72f).toInt()
+        val minSize = (w * 0.85f).toInt()
         val maxSize = w
-        val maxLeft = (w * 0.15f).toInt()
+        val maxLeft = (w * 0.08f).toInt()
         val minTop = (h * 0.12f).toInt()
         val maxTop = (h * 0.55f).toInt()
 
@@ -388,11 +383,11 @@ class BoardReader(private val context: Context) {
         var bestTop = 0
         var bestSize = 0
 
-        for (size in minSize..maxSize step 8) {
+        for (size in minSize..maxSize step 6) {
             val leftLimit = minOf(maxLeft, w - size)
-            for (left in 0..leftLimit step 6) {
+            for (left in 0..leftLimit step 4) {
                 val topLimit = minOf(maxTop, h - size)
-                for (top in minTop..topLimit step 8) {
+                for (top in minTop..topLimit step 6) {
                     val score = scoreBoardCandidate(bitmap, left.toFloat(), top.toFloat(), size.toFloat(), coarse = true)
                     if (score > bestScore) {
                         bestScore = score
@@ -411,11 +406,11 @@ class BoardReader(private val context: Context) {
         var fineTop = bestTop
         var fineSize = bestSize
 
-        for (size in (bestSize - 10)..(bestSize + 10) step 2) {
+        for (size in (bestSize - 8)..(bestSize + 8) step 1) {
             if (size < minSize || size > w) continue
-            for (left in (bestLeft - 8)..(bestLeft + 8) step 2) {
+            for (left in (bestLeft - 6)..(bestLeft + 6) step 1) {
                 if (left < 0 || left + size > w) continue
-                for (top in (bestTop - 8)..(bestTop + 8) step 2) {
+                for (top in (bestTop - 6)..(bestTop + 6) step 1) {
                     if (top < 0 || top + size > h) continue
                     val score = scoreBoardCandidate(bitmap, left.toFloat(), top.toFloat(), size.toFloat(), coarse = false)
                     if (score > fineBestScore) {
@@ -494,15 +489,15 @@ class BoardReader(private val context: Context) {
         if (coarse) return if (validNodes >= 9) totalScore else -1.0
         if (validNodes < 34) return -1.0
 
-        // Pastikan bingkai luar papan tidak ikut masuk sebagai area petak
-        val midY = (top + size * 0.5f).roundToInt()
-        val leftOutside = (left - 4f).roundToInt()
-        val rightOutside = (left + size + 4f).roundToInt()
-        if (leftOutside >= 0 && rightOutside < bitmap.width && midY in 0 until bitmap.height) {
-            val lLum = pixelLum(bitmap.getPixel(leftOutside, midY))
-            val rLum = pixelLum(bitmap.getPixel(rightOutside, midY))
-            if (abs(lLum - rLum) < 25.0) {
-                totalScore += 3.0 // Bonus simetri tepi kiri & kanan bingkai papan
+        // Verifikasi batas atas & bawah papan bertemu latar belakang gelap UI aplikasi
+        val midX = (left + size * 0.5f).roundToInt()
+        val aboveTop = (top - 6f).roundToInt()
+        val belowBottom = (top + size + 6f).roundToInt()
+        if (midX in 0 until bitmap.width && aboveTop >= 0 && belowBottom < bitmap.height) {
+            val topOutLum = pixelLum(bitmap.getPixel(midX, aboveTop))
+            val botOutLum = pixelLum(bitmap.getPixel(midX, belowBottom))
+            if (topOutLum < 75.0 && botOutLum < 75.0) {
+                totalScore += 5.0
             }
         }
 
