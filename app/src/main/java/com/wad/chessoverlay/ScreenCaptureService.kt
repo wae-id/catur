@@ -175,8 +175,8 @@ class ScreenCaptureService : Service() {
                             boardReader.statusNote.isNotEmpty() -> boardReader.statusNote
                             engine.errorMsg.isNotEmpty() -> engine.errorMsg
                             isEngineBusy.get() -> "Menghitung..."
-                            currentBestMove.isNotEmpty() -> "Terkunci"
-                            else -> "Siap"
+                            currentBestMove.isNotEmpty() -> "Siap"
+                            else -> "Memindai..."
                         }
                         overlayView?.fpsText = "FPS: $fps | $sideLabel ($status)"
                         overlayView?.evalText = currentEval
@@ -216,7 +216,6 @@ class ScreenCaptureService : Service() {
                     boardReader.statusNote == "Papan tertutup..."
                 ) {
                     clearArrowStreak++
-                    // Hanya hapus panah setelah 3 frame berturut-turut terkonfirmasi giliran lawan/popup
                     if (clearArrowStreak >= 3) {
                         lastSolvedFen = ""
                         currentBestMove = ""
@@ -241,7 +240,6 @@ class ScreenCaptureService : Service() {
                 overlayView?.invalidate()
             }
 
-            // Hanya jalankan Stockfish jika posisi FEN benar-benar baru
             if (fen != lastSolvedFen && isEngineBusy.compareAndSet(false, true)) {
                 val targetFen = fen
                 engineExecutor.execute {
@@ -342,7 +340,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Stockfish Pro + Auto-Lock Papan aktif")
+            .setContentText("Auto-Scan Papan Presisi Aktif")
             .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
