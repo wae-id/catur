@@ -2,6 +2,7 @@ package com.wad.chessoverlay
 
 class ChessLogic {
     val board = Array(8) { CharArray(8) { '.' } }
+    var currentTurn = "w"
     private var hasTrackedGame = false
     private var stableCandidate: Array<CharArray>? = null
     private var stableStreak = 0
@@ -13,13 +14,18 @@ class ChessLogic {
                 board[r][c] = '.'
             }
         }
+        currentTurn = "w"
         hasTrackedGame = false
         stableCandidate = null
         stableStreak = 0
         desyncFrames = 0
     }
 
-    fun updateFromScan(screenBoard: Array<CharArray>, isFlipped: Boolean) {
+    fun updateFromScan(
+        screenBoard: Array<CharArray>,
+        isFlipped: Boolean,
+        detectedTurn: String?
+    ) {
         val oriented = Array(8) { CharArray(8) { '.' } }
         for (r in 0..7) {
             for (c in 0..7) {
@@ -31,6 +37,7 @@ class ChessLogic {
             }
         }
 
+        // Butuh 3 frame berturut-turut yang identik agar bebas dari efek animasi geser bidak
         val prev = stableCandidate
         if (prev != null && sameOccupancy(prev, oriented)) {
             stableStreak++
@@ -38,10 +45,11 @@ class ChessLogic {
             stableCandidate = copyBoard(oriented)
             stableStreak = 1
         }
-        if (stableStreak < 2 && !isBoardEmpty()) return
+        if (stableStreak < 3 && !isBoardEmpty()) return
 
         if (isStartingPosition(oriented)) {
             setStandardStartingBoard()
+            currentTurn = "w"
             hasTrackedGame = true
             desyncFrames = 0
             return
@@ -49,6 +57,7 @@ class ChessLogic {
 
         if (hasTrackedGame) {
             if (sameOccupancy(board, oriented)) {
+                if (detectedTurn != null) currentTurn = detectedTurn
                 desyncFrames = 0
                 return
             }
@@ -56,28 +65,46 @@ class ChessLogic {
             val mySide = if (isFlipped) -1 else 1
             val oppSide = -mySide
 
-            val onePly = findBestLegalSequence(board, oriented, listOf(oppSide, mySide), maxDepth = 1)
-            if (onePly != null) {
-                copyInto(onePly, board)
+            // Coba cocokkan 1 langkah legal
+            val onePlyResult = findBestLegalSequenceWithTurn(
+                board,
+                oriented,
+                listOf(oppSide, mySide),
+                maxDepth = 1
+            )
+            if (onePlyResult != null) {
+                copyInto(onePlyResult.first, board)
+                currentTurn = detectedTurn ?: onePlyResult.second
                 desyncFrames = 0
                 return
             }
 
-            val twoPly = findBestLegalSequence(board, oriented, listOf(mySide, oppSide), maxDepth = 2)
-            if (twoPly != null) {
-                copyInto(twoPly, board)
+            // Coba cocokkan 2 langkah legal beruntun
+            val twoPlyResult = findBestLegalSequenceWithTurn(
+                board,
+                oriented,
+                listOf(mySide, oppSide),
+                maxDepth = 2
+            )
+            if (twoPlyResult != null) {
+                copyInto(twoPlyResult.first, board)
+                currentTurn = detectedTurn ?: twoPlyResult.second
                 desyncFrames = 0
                 return
             }
 
             desyncFrames++
-            if (desyncFrames >= 4) {
-                hasTrackedGame = false
+            if (desyncFrames >= 5) {
                 desyncFrames = 0
                 syncFromClassifiedBoard(oriented)
+                hasTrackedGame = true
+                if (detectedTurn != null) currentTurn = detectedTurn
             }
         } else {
+            // Saat bot baru dinyalakan di tengah permainan, kunci posisi langsung agar tidak berubah-ubah
             syncFromClassifiedBoard(oriented)
+            hasTrackedGame = true
+            currentTurn = detectedTurn ?: (if (isFlipped) "b" else "w")
         }
     }
 
@@ -110,13 +137,14 @@ class ChessLogic {
         }
     }
 
-    private fun findBestLegalSequence(
+    private fun findBestLegalSequenceWithTurn(
         startBoard: Array<CharArray>,
         targetScan: Array<CharArray>,
         firstSides: List<Int>,
         maxDepth: Int
-    ): Array<CharArray>? {
+    ): Pair<Array<CharArray>, String>? {
         var bestBoard: Array<CharArray>? = null
+        var bestNextTurn = "w"
         var bestScore = -1
 
         for (side1 in firstSides) {
@@ -127,21 +155,28 @@ class ChessLogic {
                     if (score > bestScore) {
                         bestScore = score
                         bestBoard = b1
+                        bestNextTurn = if (side1 == 1) "b" else "w"
                     }
                 } else {
-                    val moves2 = generateLegalMoves(b1, -side1)
+                    val side2 = -side1
+                    val moves2 = generateLegalMoves(b1, side2)
                     for (b2 in moves2) {
                         val score = matchScore(b2, targetScan)
                         if (score > bestScore) {
                             bestScore = score
                             bestBoard = b2
+                            bestNextTurn = if (side2 == 1) "b" else "w"
                         }
                     }
                 }
             }
         }
 
-        return if (bestScore >= 62) bestBoard else null
+        return if (bestBoard != null && bestScore >= 62) {
+            bestBoard to bestNextTurn
+        } else {
+            null
+        }
     }
 
     private fun matchScore(candidate: Array<CharArray>, scan: Array<CharArray>): Int {
@@ -410,8 +445,6 @@ class ChessLogic {
 
     fun toFEN(turn: String = "w"): String {
         val turnSide = if (turn == "w") 1 else -1
-
-        // Tolak papan jika Raja lawan sedang dalam posisi skak (ilegal di aturan UCI Stockfish)
         if (isKingInCheck(board, -turnSide)) return ""
 
         var wKings = 0
