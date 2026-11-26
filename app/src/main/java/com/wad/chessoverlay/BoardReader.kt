@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PointF
 import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -16,15 +17,14 @@ class BoardReader(private val context: Context) {
     var isUserPlayingBlack = false
     var detectedPoints: List<PointF>? = null
     var statusNote = ""
-    private var missedBoardFrames = 0
 
     init {
-        detectedPoints = loadManualCalibration()
+        detectedPoints = loadSavedPoints("calibration_points") ?: loadSavedPoints("auto_locked_points")
     }
 
-    fun loadManualCalibration(): List<PointF>? {
+    private fun loadSavedPoints(key: String): List<PointF>? {
         val prefs = context.getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
-        val jsonString = prefs.getString("calibration_points", null) ?: return null
+        val jsonString = prefs.getString(key, null) ?: return null
 
         return try {
             val jsonArray = JSONArray(jsonString)
@@ -39,18 +39,34 @@ class BoardReader(private val context: Context) {
         }
     }
 
+    private fun saveAutoLockedPoints(points: List<PointF>) {
+        val prefs = context.getSharedPreferences("ChessOverlay", Context.MODE_PRIVATE)
+        val jsonArray = JSONArray()
+        for (p in points) {
+            val obj = JSONObject()
+            obj.put("x", p.x.toDouble())
+            obj.put("y", p.y.toDouble())
+            jsonArray.put(obj)
+        }
+        prefs.edit().putString("auto_locked_points", jsonArray.toString()).apply()
+    }
+
     fun isBoardReady(): Boolean = true
 
     fun resetGame() {
         chessLogic.reset()
-        detectedPoints = loadManualCalibration()
-        missedBoardFrames = 0
+        detectedPoints = loadSavedPoints("calibration_points") ?: loadSavedPoints("auto_locked_points")
         statusNote = ""
     }
 
     fun scanFullBoard(screenBitmap: Bitmap): String {
+        // 1. Cari posisi papan hanya jika belum terkunci
         if (detectedPoints == null) {
-            detectedPoints = autoDetectBoard(screenBitmap)
+            val found = autoDetectBoard(screenBitmap)
+            if (found != null) {
+                detectedPoints = found
+                saveAutoLockedPoints(found)
+            }
         }
 
         val points = detectedPoints ?: run {
@@ -58,21 +74,15 @@ class BoardReader(private val context: Context) {
             return ""
         }
 
-        // Cek apakah papan tertutup popup/dialog (misal "Putih Menang" / menu)
         val l = points[0].x
         val t = points[0].y
         val boardSize = points[1].x - points[0].x
-        if (boardSize > 100f && !isBoardUnobstructed(screenBitmap, l, t, boardSize)) {
-            missedBoardFrames++
-            if (missedBoardFrames >= 16 && loadManualCalibration() == null) {
-                val newPoints = autoDetectBoard(screenBitmap)
-                if (newPoints != null) detectedPoints = newPoints
-                missedBoardFrames = 0
-            }
+
+        // 2. Cek apakah tengah papan tertutup dialog/popup gelap (misal popup "Putih Menang")
+        if (boardSize > 100f && isPopupCoveringBoard(screenBitmap, l, t, boardSize)) {
             statusNote = "Papan tertutup..."
             return ""
         }
-        missedBoardFrames = 0
 
         val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
         val matrix = Homography.getPerspectiveTransform(src, points)
@@ -95,7 +105,6 @@ class BoardReader(private val context: Context) {
             return ""
         }
 
-        // Deteksi otomatis warna bidak pengguna (Putih vs Hitam)
         if (autoDetectSide) {
             val detectedBlackSide = detectSideAutomatically(detectedBoard)
             if (detectedBlackSide != null && detectedBlackSide != isUserPlayingBlack) {
@@ -106,7 +115,6 @@ class BoardReader(private val context: Context) {
 
         val detectedTurnFromHighlight = inferTurnFromHighlights(detectedBoard, highlightedSquares)
 
-        // Konversi koordinat sorotan kuning ke orientasi papan catur standar
         val orientedHighlights = highlightedSquares.map { (r, c) ->
             if (isUserPlayingBlack) (7 - r) to (7 - c) else r to c
         }.toSet()
@@ -131,25 +139,32 @@ class BoardReader(private val context: Context) {
     }
 
     /**
-     * Memastikan 49 titik pertemuan kotak di dalam papan masih memiliki pola terang-gelap catur
-     * dan tidak tertutup jendela dialog/popup.
+     * Mendeteksi popup modal (latar biru gelap/abu gelap seragam di tengah papan).
+     * Petak papan catur normal selalu berwarna hangat (R >= B), bukan biru gelap.
      */
-    private fun isBoardUnobstructed(bitmap: Bitmap, left: Float, top: Float, size: Float): Boolean {
+    private fun isPopupCoveringBoard(bitmap: Bitmap, left: Float, top: Float, size: Float): Boolean {
         val cell = size / 8f
-        val d = (cell * 0.14f).coerceAtLeast(3f)
-        var validNodes = 0
+        var modalHits = 0
 
-        for (row in 1..7) {
-            for (col in 1..7) {
-                val ix = left + col * cell
-                val iy = top + row * cell
-                val diff = abs(cornerContrast(bitmap, ix, iy, d))
-                if (diff > 14.0) {
-                    validNodes++
+        for (r in 2..5) {
+            for (c in 2..5) {
+                val px = (left + (c + 0.15f) * cell).roundToInt()
+                val py = (top + (r + 0.15f) * cell).roundToInt()
+                if (px in 0 until bitmap.width && py in 0 until bitmap.height) {
+                    val pixel = bitmap.getPixel(px, py)
+                    val red = Color.red(pixel)
+                    val green = Color.green(pixel)
+                    val blue = Color.blue(pixel)
+                    val lum = 0.299 * red + 0.587 * green + 0.114 * blue
+
+                    // Latar dialog/modal memiliki komponen biru dominan (blue > red + 10) dan gelap
+                    if (blue > red + 10 && lum < 125.0) {
+                        modalHits++
+                    }
                 }
             }
         }
-        return validNodes >= 28
+        return modalHits >= 10
     }
 
     private fun detectSideAutomatically(rawBoard: Array<CharArray>): Boolean? {
@@ -362,22 +377,22 @@ class BoardReader(private val context: Context) {
         val h = bitmap.height
         if (w < 300 || h < 400) return null
 
-        val minSize = (w * 0.70f).toInt()
+        val minSize = (w * 0.72f).toInt()
         val maxSize = w
-        val maxLeft = (w * 0.18f).toInt()
-        val minTop = (h * 0.10f).toInt()
-        val maxTop = (h * 0.58f).toInt()
+        val maxLeft = (w * 0.15f).toInt()
+        val minTop = (h * 0.12f).toInt()
+        val maxTop = (h * 0.55f).toInt()
 
         var bestScore = 0.0
         var bestLeft = 0
         var bestTop = 0
         var bestSize = 0
 
-        for (size in minSize..maxSize step 10) {
+        for (size in minSize..maxSize step 8) {
             val leftLimit = minOf(maxLeft, w - size)
-            for (left in 0..leftLimit step 8) {
+            for (left in 0..leftLimit step 6) {
                 val topLimit = minOf(maxTop, h - size)
-                for (top in minTop..topLimit step 10) {
+                for (top in minTop..topLimit step 8) {
                     val score = scoreBoardCandidate(bitmap, left.toFloat(), top.toFloat(), size.toFloat(), coarse = true)
                     if (score > bestScore) {
                         bestScore = score
@@ -396,11 +411,11 @@ class BoardReader(private val context: Context) {
         var fineTop = bestTop
         var fineSize = bestSize
 
-        for (size in (bestSize - 12)..(bestSize + 12) step 2) {
+        for (size in (bestSize - 10)..(bestSize + 10) step 2) {
             if (size < minSize || size > w) continue
-            for (left in (bestLeft - 10)..(bestLeft + 10) step 2) {
+            for (left in (bestLeft - 8)..(bestLeft + 8) step 2) {
                 if (left < 0 || left + size > w) continue
-                for (top in (bestTop - 10)..(bestTop + 10) step 2) {
+                for (top in (bestTop - 8)..(bestTop + 8) step 2) {
                     if (top < 0 || top + size > h) continue
                     val score = scoreBoardCandidate(bitmap, left.toFloat(), top.toFloat(), size.toFloat(), coarse = false)
                     if (score > fineBestScore) {
@@ -431,7 +446,7 @@ class BoardReader(private val context: Context) {
         coarse: Boolean
     ): Double {
         val cell = size / 8f
-        val d = (cell * 0.14f).coerceAtLeast(3f)
+        val d = (cell * 0.13f).coerceAtLeast(3f)
 
         var expectedSign = 0
         var quickHits = 0
@@ -477,7 +492,21 @@ class BoardReader(private val context: Context) {
         }
 
         if (coarse) return if (validNodes >= 9) totalScore else -1.0
-        return if (validNodes >= 34) totalScore else -1.0
+        if (validNodes < 34) return -1.0
+
+        // Pastikan bingkai luar papan tidak ikut masuk sebagai area petak
+        val midY = (top + size * 0.5f).roundToInt()
+        val leftOutside = (left - 4f).roundToInt()
+        val rightOutside = (left + size + 4f).roundToInt()
+        if (leftOutside >= 0 && rightOutside < bitmap.width && midY in 0 until bitmap.height) {
+            val lLum = pixelLum(bitmap.getPixel(leftOutside, midY))
+            val rLum = pixelLum(bitmap.getPixel(rightOutside, midY))
+            if (abs(lLum - rLum) < 25.0) {
+                totalScore += 3.0 // Bonus simetri tepi kiri & kanan bingkai papan
+            }
+        }
+
+        return totalScore
     }
 
     private fun cornerContrast(bitmap: Bitmap, ix: Float, iy: Float, d: Float): Double {
