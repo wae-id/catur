@@ -1,7 +1,5 @@
 package com.wad.chessoverlay
 
-import kotlin.math.abs
-
 class ChessLogic {
     val board = Array(8) { CharArray(8) { '.' } }
     var currentTurn = "w"
@@ -82,36 +80,45 @@ class ChessLogic {
             return
         }
 
+        val mySide = if (isFlipped) -1 else 1
+        val oppSide = -mySide
+
         if (hasTrackedGame) {
             if (sameOccupancy(board, oriented)) {
                 if (detectedTurn != null) currentTurn = detectedTurn
+                enforceCheckTurnInvariant(mySide, oppSide)
                 desyncFrames = 0
                 return
             }
 
-            val mySide = if (isFlipped) -1 else 1
-            val oppSide = -mySide
+            // Prioritaskan sisi yang sedang memegang giliran saat ini
+            val expectedSide = if (currentTurn == "w") 1 else -1
+            val orderedSides = listOf(expectedSide, -expectedSide)
 
             val onePlyResult = findBestLegalSequenceWithTurn(
                 oriented,
-                listOf(oppSide, mySide),
+                orderedSides,
                 maxDepth = 1,
-                highlights = highlightedSquares
+                highlights = highlightedSquares,
+                expectedFirstSide = expectedSide
             )
             if (onePlyResult != null) {
                 applyChosenState(onePlyResult.first, detectedTurn ?: onePlyResult.second)
+                enforceCheckTurnInvariant(mySide, oppSide)
                 desyncFrames = 0
                 return
             }
 
             val twoPlyResult = findBestLegalSequenceWithTurn(
                 oriented,
-                listOf(mySide, oppSide),
+                orderedSides,
                 maxDepth = 2,
-                highlights = highlightedSquares
+                highlights = highlightedSquares,
+                expectedFirstSide = expectedSide
             )
             if (twoPlyResult != null) {
                 applyChosenState(twoPlyResult.first, detectedTurn ?: twoPlyResult.second)
+                enforceCheckTurnInvariant(mySide, oppSide)
                 desyncFrames = 0
                 return
             }
@@ -121,12 +128,27 @@ class ChessLogic {
                 desyncFrames = 0
                 syncFromClassifiedBoard(oriented)
                 hasTrackedGame = true
-                if (detectedTurn != null) currentTurn = detectedTurn
+                currentTurn = detectedTurn ?: (if (isFlipped) "b" else "w")
+                enforceCheckTurnInvariant(mySide, oppSide)
             }
         } else {
             syncFromClassifiedBoard(oriented)
             hasTrackedGame = true
             currentTurn = detectedTurn ?: (if (isFlipped) "b" else "w")
+            enforceCheckTurnInvariant(mySide, oppSide)
+        }
+    }
+
+    /**
+     * Aturan mutlak catur: pihak yang Rajanya sedang dalam posisi skak pasti sedang memegang giliran.
+     */
+    private fun enforceCheckTurnInvariant(mySide: Int, oppSide: Int) {
+        val myInCheck = isKingInCheck(board, mySide)
+        val oppInCheck = isKingInCheck(board, oppSide)
+        if (myInCheck && !oppInCheck) {
+            currentTurn = if (mySide == 1) "w" else "b"
+        } else if (oppInCheck && !myInCheck) {
+            currentTurn = if (oppSide == 1) "w" else "b"
         }
     }
 
@@ -178,7 +200,8 @@ class ChessLogic {
         targetScan: Array<CharArray>,
         firstSides: List<Int>,
         maxDepth: Int,
-        highlights: Set<Pair<Int, Int>>
+        highlights: Set<Pair<Int, Int>>,
+        expectedFirstSide: Int
     ): Pair<MoveCandidate, String>? {
         var bestCandidate: MoveCandidate? = null
         var bestNextTurn = "w"
@@ -199,10 +222,12 @@ class ChessLogic {
         )
 
         for (side1 in firstSides) {
+            val turnOrderBonus = if (side1 == expectedFirstSide) 1.2 else 0.0
             val moves1 = generateLegalMoves(rootState, side1)
             for (m1 in moves1) {
                 if (maxDepth == 1) {
-                    val (occMatches, totalScore) = evaluateMatch(m1, targetScan, highlights)
+                    val (occMatches, baseScore) = evaluateMatch(m1, targetScan, highlights)
+                    val totalScore = baseScore + turnOrderBonus
                     if (occMatches >= 62 && totalScore > bestTotalScore) {
                         bestOccupancyMatches = occMatches
                         bestTotalScore = totalScore
@@ -213,7 +238,8 @@ class ChessLogic {
                     val side2 = -side1
                     val moves2 = generateLegalMoves(m1, side2)
                     for (m2 in moves2) {
-                        val (occMatches, totalScore) = evaluateMatch(m2, targetScan, highlights)
+                        val (occMatches, baseScore) = evaluateMatch(m2, targetScan, highlights)
+                        val totalScore = baseScore + turnOrderBonus
                         if (occMatches >= 62 && totalScore > bestTotalScore) {
                             bestOccupancyMatches = occMatches
                             bestTotalScore = totalScore
@@ -253,7 +279,6 @@ class ChessLogic {
             }
         }
 
-        // Bonus besar jika petak asal & tujuan cocok dengan sorotan kuning di layar
         var highlightBonus = 0.0
         if (highlights.size == 2 && candidate.fromRow in 0..7) {
             if ((candidate.fromRow to candidate.fromCol) in highlights) highlightBonus += 2.5
@@ -528,7 +553,6 @@ class ChessLogic {
         if (whiteKingCount == 0) placeFallbackKing('K', 7)
         if (blackKingCount == 0) placeFallbackKing('k', 0)
 
-        // Simpulkan hak rokade dari posisi Raja & Benteng saat sinkronisasi tengah game
         canWhiteCastleK = (board[7][4] == 'K' && board[7][7] == 'R')
         canWhiteCastleQ = (board[7][4] == 'K' && board[7][0] == 'R')
         canBlackCastleK = (board[0][4] == 'k' && board[0][7] == 'r')
