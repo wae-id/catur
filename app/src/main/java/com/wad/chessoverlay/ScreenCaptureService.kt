@@ -4,11 +4,13 @@ import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.graphics.PointF
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -40,21 +42,26 @@ class ScreenCaptureService : Service() {
     private var backgroundHandler: Handler? = null
     private val engineExecutor = Executors.newSingleThreadExecutor()
     private val isEngineBusy = AtomicBoolean(false)
+    private val isPerformingMove = AtomicBoolean(false)
 
     private var frameCount = 0
     private var lastFpsTime = 0L
     private var lastProcessTime = 0L
     private var lastSolvedFen = ""
+    private var lastExecutedFen = ""
     private var currentBestMove = ""
     private var currentEval = ""
     private var clearArrowStreak = 0
+    private var isAutoPlayEnabled = true
 
     companion object {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
+        const val ACTION_TOGGLE_AUTOPLAY = "ACTION_TOGGLE_AUTOPLAY"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_DATA_INTENT = "EXTRA_DATA_INTENT"
         const val EXTRA_SIDE_MODE = "EXTRA_SIDE_MODE"
+        const val EXTRA_AUTO_PLAY = "EXTRA_AUTO_PLAY"
         private const val CHANNEL_ID = "ChessOverlayChannel"
         private const val NOTIF_ID = 1
     }
@@ -82,7 +89,16 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
+        if (intent?.action == ACTION_TOGGLE_AUTOPLAY) {
+            isAutoPlayEnabled = !isAutoPlayEnabled
+            lastExecutedFen = ""
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.notify(NOTIF_ID, buildNotification())
+            return START_STICKY
+        }
+
         if (intent?.action == ACTION_START) {
+            isAutoPlayEnabled = intent.getBooleanExtra(EXTRA_AUTO_PLAY, true)
             startForegroundServiceCompat()
 
             val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
@@ -111,6 +127,7 @@ class ScreenCaptureService : Service() {
 
             boardReader.resetGame()
             lastSolvedFen = ""
+            lastExecutedFen = ""
             currentBestMove = ""
             currentEval = ""
             clearArrowStreak = 0
@@ -171,14 +188,20 @@ class ScreenCaptureService : Service() {
                     Handler(mainLooper).post {
                         val colorName = if (boardReader.isUserPlayingBlack) "Hitam" else "Putih"
                         val sideLabel = if (boardReader.autoDetectSide) "Auto: $colorName" else colorName
+                        val modeTag = when {
+                            !isAutoPlayEnabled -> "Manual"
+                            AutoTapAccessibilityService.instance == null -> "Aksesibilitas Off"
+                            else -> "BOT"
+                        }
                         val status = when {
                             boardReader.statusNote.isNotEmpty() -> boardReader.statusNote
                             engine.errorMsg.isNotEmpty() -> engine.errorMsg
+                            isPerformingMove.get() -> "Melangkah..."
                             isEngineBusy.get() -> "Menghitung..."
                             currentBestMove.isNotEmpty() -> "Siap"
                             else -> "Memindai..."
                         }
-                        overlayView?.fpsText = "FPS: $fps | $sideLabel ($status)"
+                        overlayView?.fpsText = "FPS: $fps | $sideLabel [$modeTag] ($status)"
                         overlayView?.evalText = currentEval
                         overlayView?.invalidate()
                     }
@@ -218,6 +241,7 @@ class ScreenCaptureService : Service() {
                     clearArrowStreak++
                     if (clearArrowStreak >= 3) {
                         lastSolvedFen = ""
+                        lastExecutedFen = ""
                         currentBestMove = ""
                         currentEval = ""
                     }
@@ -242,6 +266,9 @@ class ScreenCaptureService : Service() {
 
             if (fen != lastSolvedFen && isEngineBusy.compareAndSet(false, true)) {
                 val targetFen = fen
+                val snapshotPoints = currentPoints
+                val snapshotFlipped = boardReader.isUserPlayingBlack
+
                 engineExecutor.execute {
                     try {
                         val (move, eval) = engine.getBestMoveWithEval(targetFen)
@@ -254,6 +281,8 @@ class ScreenCaptureService : Service() {
                                 overlayView?.evalText = currentEval
                                 overlayView?.invalidate()
                             }
+
+                            triggerAutoMoveIfReady(targetFen, move, snapshotPoints, snapshotFlipped)
                         }
                     } finally {
                         isEngineBusy.set(false)
@@ -266,6 +295,74 @@ class ScreenCaptureService : Service() {
                 bitmap.recycle()
             }
         }
+    }
+
+    private fun triggerAutoMoveIfReady(
+        fen: String,
+        move: String,
+        calibPoints: List<PointF>?,
+        isFlipped: Boolean
+    ) {
+        if (!isAutoPlayEnabled) return
+        val tapService = AutoTapAccessibilityService.instance ?: return
+        if (calibPoints == null || calibPoints.size != 4 || move.length < 4) return
+        if (fen == lastExecutedFen) return
+        if (!isPerformingMove.compareAndSet(false, true)) return
+
+        var fromCol = move[0] - 'a'
+        var fromRow = 8 - Character.getNumericValue(move[1])
+        var toCol = move[2] - 'a'
+        var toRow = 8 - Character.getNumericValue(move[3])
+
+        if (fromCol !in 0..7 || fromRow !in 0..7 || toCol !in 0..7 || toRow !in 0..7) {
+            isPerformingMove.set(false)
+            return
+        }
+
+        if (isFlipped) {
+            fromCol = 7 - fromCol
+            fromRow = 7 - fromRow
+            toCol = 7 - toCol
+            toRow = 7 - toRow
+        }
+
+        val src = listOf(PointF(0f, 0f), PointF(8f, 0f), PointF(8f, 8f), PointF(0f, 8f))
+        val matrix = Homography.getPerspectiveTransform(src, calibPoints)
+
+        val p1 = Homography.transformPoint(matrix, PointF(fromCol + 0.5f, fromRow + 0.5f))
+        val p2 = Homography.transformPoint(matrix, PointF(toCol + 0.5f, toRow + 0.5f))
+
+        var promoPt: PointF? = null
+        if (move.length >= 5) {
+            val promoRow = when (move[4].lowercaseChar()) {
+                'q' -> 0
+                'n' -> 1
+                'r' -> 2
+                'b' -> 3
+                else -> 0
+            }
+            promoPt = Homography.transformPoint(matrix, PointF(toCol + 0.5f, promoRow + 0.5f))
+        }
+
+        // Jeda 450ms agar panah terlihat sejenak dan animasi lawan benar-benar selesai
+        Handler(mainLooper).postDelayed({
+            if (!isAutoPlayEnabled || boardReader.statusNote == "Papan tertutup...") {
+                isPerformingMove.set(false)
+                return@postDelayed
+            }
+
+            lastExecutedFen = fen
+            tapService.performChessMove(
+                startX = p1.x,
+                startY = p1.y,
+                endX = p2.x,
+                endY = p2.y,
+                promoX = promoPt?.x,
+                promoY = promoPt?.y
+            ) {
+                isPerformingMove.set(false)
+            }
+        }, 450L)
     }
 
     private fun imageToBitmap(image: Image, width: Int, height: Int): Bitmap? {
@@ -338,10 +435,23 @@ class ScreenCaptureService : Service() {
     }
 
     private fun buildNotification(): Notification {
+        val toggleIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ACTION_TOGGLE_AUTOPLAY
+        }
+        val togglePendingIntent = PendingIntent.getService(
+            this,
+            0,
+            toggleIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val toggleLabel = if (isAutoPlayEnabled) "Jeda Auto-Bot" else "Lanjut Auto-Bot"
+        val statusSubtext = if (isAutoPlayEnabled) "Auto-Bot Main Sendiri Aktif" else "Mode Manual (Hanya Panah)"
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Chess Overlay Aktif")
-            .setContentText("Auto-Scan Papan Presisi Aktif")
+            .setContentText(statusSubtext)
             .setSmallIcon(R.drawable.ic_notification)
+            .addAction(0, toggleLabel, togglePendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
