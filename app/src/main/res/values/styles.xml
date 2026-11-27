@@ -6,6 +6,9 @@
         <item name="colorAccent">#00E676</item>
     </style>
 
+    <string name="accessibility_service_desc">Menggerakkan bidak catur otomatis sesuai analisis Stockfish</string>
+    
+
     <style name="Theme.ChessOverlay.Translucent" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
